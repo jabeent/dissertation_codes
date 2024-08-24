@@ -8,6 +8,7 @@ output: pdf_document
 ```{r}
 library(pacman)
 pacman::p_load(tidyverse, janitor, tidymodels, factoextra, ggfortify, gridExtra, knitr)
+
 ```
 
 ```{r}
