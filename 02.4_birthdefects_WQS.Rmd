@@ -1,0 +1,42 @@
+---
+title: "02.4_birthdefects_WQS"
+author: "Taiba"
+date: "2023-07-17"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, caret, Hmisc, glmnet, Matrix, gglasso, grpreg, sparsegl, Matrix, glmnet, stabs, gWQS)
+```
+
+#WQS model
+```{r}
+dat_wqs <- read_csv("birth_def_chem_sdoh.csv") 
+
+```
+
+```{r}
+chem_mix<- names(dat_wqs)[20:51]
+
+wqs_res<- gwqs(total_bd ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat_wqs$live_birth,
+               zero_infl = FALSE, #only for birth defect sub-types
+               data = dat_wqs,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = TRUE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+```
+
+```{r}
+gwqs_scatterplot(wqs_res)
+gwqs_summary_tab(wqs_res)
+
+gwqs_barplot(wqs_res)
+gwqs_weights_tab(wqs_res)
+```
+

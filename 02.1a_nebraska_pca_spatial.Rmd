@@ -1,0 +1,285 @@
+---
+title: "02.1a_nebraska_pca_spatial"
+author: "Taiba"
+date: "2023-07-22"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidymodels, factoextra, ggfortify, gridExtra, knitr, tmap, sp, sf, tigris, spdep)
+```
+
+```{r}
+ne_chemi_class <- read_csv("ne_final_chemv4.csv") |>
+  filter(compound != "TRIASULFURON" & compound != "METSULFURON" & compound != "MCPA" )
+```
+
+
+```{r}
+# pivot from long to wide format contains 93 obs with 29 variables
+ne_chemi_wide <- ne_chemi_class[c(1:3)] |>
+  pivot_wider(names_from = compound, values_from = median_pest) |>
+  select(-c(county_fips_code))|>
+ mutate_at(vars(1:29), ~log10(.+0.0000001))
+
+# Calculate principal components
+#scale: a logical value indicating whether the variables should be scaled to have unit variance before the analysis takes place
+pca.ln <- prcomp(ne_chemi_wide, scale = TRUE)
+#save(pca.ln, file = "ne_pca_ln.rda")
+```
+
+```{r}
+#load model object
+load("ne_pca_ln.rda")
+```
+
+```{r}
+eigenvalues_ln <- matrix(pca.ln$sdev^2) #eigenvalues
+perc_variance <- round(100*matrix(pca.ln$sdev^2/sum(pca.ln$sdev^2)),1) #variance
+
+#Summary table 
+eigenvalues_ln <- cbind(1:29, eigenvalues_ln, perc_variance) 
+colum_ln <- c("Principal Component", "Eigenvalues", "Percent Variance")
+eigenvalues_ln <- kable(eigenvalues_ln, col.names = colum_ln)
+eigenvalues_ln 
+```
+
+## Proportion of Variance Plots
+The first two components explained 87% of the variance 
+```{r PVE plots}
+#Plots the proportion of variance explained by each component (scree plot)
+pve.ln <- pca.ln$sdev^2/sum(pca.ln$sdev^2) #proportion of variance explain by each component
+ 
+#log-transformed data
+fviz_eig(pca.ln, main = "",
+         xlab = "Principal component",
+         ylim = c(0,50))
+
+ggsave("ne_pca_screeplot.tiff",
+       width=6, height= 6, dpi=300)
+```
+
+
+## Data Visualization of eigenvectors w/ Log-Transformed PCA Results
+Loadings are the weights that each chemical contribute to the component. Scores are the sum of loadings multiply by concentration of each chemical for each person. So you get a loading for each chemical in each component and also a total loading for each principal component (which is the sum of the chemical's loadings). You also get a score for each person (each observation) which is the sum of the scores of each chemical (loading*chemical concentration). So for each person (observation) you have a score for each principal component. Each principal component also has a score which is the sum of the scores within the principal component. 
+
+```{r}
+pca.ln.ld <- as.data.frame.matrix(pca.ln$rotation) ## rotation is the loadings variable within the pca output.
+pca.ln.ld$chem <- row.names(pca.ln.ld)
+
+#run compounds_classes from file 02.1_nebraska_pest_analysis.Rmd
+# Convert the list to a tibble and unnest the list
+loadings_pca <- pca.ln.ld |>
+  mutate(Group = case_when(
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Herbicide ~ "Herbicide",
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Insecticide ~ "Insecticide",
+    TRUE ~ NA_character_
+  ))
+
+plot_loadings_pca <- loadings_pca |> 
+  gather(key = "PC", value = "Loading", -chem, -Group) |> as_tibble()
+
+################################################################
+chem_order <- c("2,4-D", "ATRAZINE","ALACHLOR","ACETOCHLOR","BROMOXYNIL", "CLETHODIM","CLOPYRALID", "DICAMBA","DIMETHENAMID","FLUMETSULAM","GLYPHOSATE", 
+                                      "IMAZETHAPYR","METOLACHLOR","PARAQUAT", 
+                                      "METRIBUZIN", "NICOSULFURON", "PICLORAM","PENDIMETHALIN","QUIZALOFOP", "SETHOXYDIM", "THIFENSULFURON", "TRIFLURALIN","BIFENTHRIN" ,"CHLORPYRIFOS", "DIMETHOATE", "ESFENVALERATE","PERMETHRIN","TEFLUTHRIN","TERBUFOS")
+
+plot_loadings_pca |> 
+  filter(PC %in% c("PC1", "PC2", "PC3")) |> 
+  mutate(PC = as.factor(PC),
+         PC = fct_recode(PC, "PC 1" = "PC1",
+         "PC 2" = "PC2",
+         "PC 3" = "PC3"),
+         chem = factor(chem, levels = chem_order)) |> 
+  ggplot(aes(x = chem, 
+             y = Loading, 
+             fill=Group)) + 
+  geom_col() +
+  facet_wrap(~ PC) + 
+  theme_bw() + 
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "white")) +
+  geom_hline(yintercept = 0, linewidth = 0.2) +
+  labs(x = "Chemicals",
+       y = "Loadings")
+
+ggsave("ne_pca_loadings.tiff",
+       width=10, height= 7, dpi=300)
+```
+
+#Extracting the first principal component with highest variance for mapping
+```{r}
+new_index_withpc1<- data.frame(pca.ln$x[,1])
+
+# saving pc1 
+#write_csv(new_index_withpc1, "ne_index_scores.csv")
+```
+
+#combine index variables with chemicals applied data
+```{r}
+ne_chem_mapping <- ne_chemi_class[c(1:3)] |>
+  pivot_wider(names_from = compound, values_from = median_pest)|>
+  mutate_at(vars(2:30), ~log10(.+0.0000001))
+
+# final file for mapping
+ne_dat_map<- cbind(ne_chem_mapping, new_index_withpc1)
+write_csv(ne_dat_map, "ne_mapping_dat_final.csv")
+
+```
+
+##########################################################################################
+############################################################################################
+# Spatial analysis
+```{r}
+ne_counties <- counties(state = "ne", cb = FALSE, resolution = "500k", year = "2010", class="sf") |>
+  clean_names()
+```
+
+
+```{r}
+dat<- read_csv("ne_mapping_dat_final.csv") |>
+  rename(countyfp10="county_fips_code", pc1= "pca.ln.x...1.") |>
+  mutate(countyfp10 = str_pad(as.character(countyfp10), width = 3, pad = "0"),
+         pc1= pc1*(-1)) #09/07/2023
+
+dat_fin<- left_join(ne_counties, dat, by="countyfp10")
+```
+
+#Producing maps
+```{r}
+# Load the viridis package
+library(viridis)
+library(tmap)
+
+# Define a custom color palette with Viridis shades
+num_colors <- 4  # Set the number of colors in the palette
+custom_palette <- viridis(num_colors)
+
+chem<- "pc1"
+
+# Modify your code to use the custom color palette
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+              breaks = quantile(dat_fin[[chem]], probs = c(0, .25, .5, .75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+              palette = custom_palette,  # Using the custom Viridis color palette
+              title = "pc1") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_text(text = "name10") +
+  tm_layout(legend.title.size = 0.8, legend.text.size = 0.6) +
+  tm_legend(position = c("left", "bottom"), frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top")) 
+
+tmap_save(w, "ne_pc1_viridis_palette.tiff",
+          width = 12, height = 15, dpi = 150)
+
+```
+
+# Exploratory spatial data analysis (ESDA) - to perform this we are converting neighbors list object to spatial weights
+#spatial correlation- understanding spatial neighborhoods using poly2nb() and generating the spatial weights matrix using nb2listw() and specifying style ="B" produces binary weights, where neighbors are given the weight 1 and non-neighbors take the weight of 0. This style of weights is useful for producing neighborhood sums.
+
+# understanding spatial neighborhoods/ contiguity-based neighbors, used when geographic features are polygons. poly2nb(), is used for queen’s case neighbors, where all polygons that share at least one vertex are considered neighbors. This function take an sf object as an argument and produce a neighbors list object
+```{r}
+neighbors <- poly2nb(col_sp, queen = TRUE)
+
+summary(neighbors)
+```
+# Summary interpretation- On average, the counties in the CONUS area have 5.93 neighbors. The minimum number of neighbors in the dataset is 1 (there are 13 such tracts), and the maximum number of neighbors is 14 (the tract at row index 2697)
+
+# Calculating spatial weights
+```{r}
+col_sp <- as(dat_fin, "Spatial")
+col_nb <- poly2nb(col_sp) 
+col_listw <- nb2listw(col_nb, style = "B") # listw version of the neighborhood
+
+```
+
+# Spatial autocorrelation: The concept of spatial autocorrelation relates to Waldo Tobler’s famous “first law of geography,” which reads (Tobler 1970): Everything is related to everything else, but near things are more related than distant things.
+#spatial clustering- data values tend to be similar to neighboring data values
+
+# Global spatial autocorrelation using Moron's I using spdep package. It gives the relationship between observations and their neighbors 
+
+```{r}
+moran.test(dat_fin$pc1, listw = col_listw)
+```
+
+
+# Identifying clusters and spatial outliers with local indicators of spatial association (LISA), an extension of Global Moran's I statistic using localmoran_perm() function, implements LISA where statistical significance is calculated based on a conditional permutation-based approach. 
+
+```{r}
+set.seed(1983) #random number seed is set given that we are using the conditional permutation approach to calculating statistical significance
+
+dat_fin$scaled_pc1 <- as.numeric(scale(dat_fin$pc1)) #pc1 is converted to a z-score using scale(), which subtracts the mean from the estimate then divides by its standard deviation. This follows convention from GeoDa
+
+# LISA is computed with localmoran_perm() for the scaled value for pc1, using the contiguity-based spatial weights matrix. 999 conditional permutation simulations are used to calculate statistical significance, and the argument alternative = "two.sided" will identify both statistically significant clusters and statistically significant spatial outliers
+dfw_lisa <- localmoran_perm( 
+ dat_fin$scaled_pc1, 
+listw = col_listw, 
+  nsim = 999L, 
+  alternative = "two.sided"
+) %>%
+  as_tibble() %>%
+  set_names(c("local_i", "exp_i", "var_i", "z_i", "p_i",
+              "p_i_sim", "pi_sim_folded", "skewness", "kurtosis"))
+
+# attaching LISA data frame to the Census tract shapes after computing the lagged value for pc1. #spatial lag calculated using lag.listw(), it refers to the neighboring values of an observation given a spatial weights matrix
+
+dfw_lisa_df <- dat_fin %>%
+  select(geoid10, scaled_pc1) %>%
+  mutate(lagged_estimate = lag.listw(col_listw, scaled_pc1)) %>% 
+  bind_cols(dfw_lisa)
+
+#recode the data into appropriate categories for the LISA quadrant plot, using a significance level of p = 0.05
+
+dfw_lisa_clusters <- dfw_lisa_df %>% 
+  mutate(lisa_cluster = case_when(
+    p_i >= 0.05 ~ "Not significant",
+    scaled_pc1 > 0 & local_i > 0 ~ "High-high",
+    scaled_pc1 > 0 & local_i < 0 ~ "High-low",
+    scaled_pc1 < 0 & local_i > 0 ~ "Low-low",
+    scaled_pc1 < 0 & local_i < 0 ~ "Low-high"
+  ))
+
+#The LISA quadrant plot
+
+color_values <- c(`High-high` = "Yellow", 
+                  `High-low` = "pink", 
+                  `Low-low` = "purple", 
+                  `Low-high` = "lightblue", 
+                  `Not significant` = "white")
+
+ggplot(dfw_lisa_clusters, aes(x = scaled_pc1, 
+                              y = lagged_estimate,
+                              fill = lisa_cluster)) + 
+  geom_point(color = "black", shape = 21, size = 2) + 
+  theme_minimal() + 
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") + 
+  scale_fill_manual(values = color_values) + 
+  labs(x = "PC 1 (z-score)",
+       y = "Spatial lag of PC 1 (z-score)",
+       fill = "Cluster type")
+
+ggsave("ne_pc1_lisa_clusters.tiff",
+          width = 12, height=12, dpi=150)
+
+```
+
+# Interpretation- Observations falling in the top-right quadrant represent “high-high” clusters. Statistically significant clusters - those with a p-value less than or equal to 0.05 - are colored red on the chart. The bottom-left quadrant also represents spatial clusters, but instead includes lower-pc1 tracts that are also surrounded by tracts with similarly low pc1. The top-left and bottom-right quadrants are home to the spatial outliers, where values are dissimilar from their neighbors.
+
+
+# Cluster map using ggplot2 and geom_sf(). Here observations are visualized in relationship to their cluster membership and statistical significance
+```{r}
+
+ggplot(dfw_lisa_clusters, aes(fill = lisa_cluster)) + 
+  geom_sf(size = 0.1) + 
+  theme_void() + 
+  scale_fill_manual(values = color_values) + 
+  labs(fill = "Cluster type")
+
+ggsave("ne_pc1_clusters_map.tiff",
+          width = 12, height=12, dpi=150)
+
+```

@@ -1,0 +1,215 @@
+---
+author: "Jabeen"
+title: "Untitled"
+output: pdf_document
+date: "2023-03-24"
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor)
+```
+
+# Step 1 Original raw pesticide dataset for 48 US States
+```{r}
+load("~/Desktop/Jabbeen/jt_dissert/jt_dissert/pest_conus_v2.RDA")
+dat_conus$year<- as.numeric(as.character(dat_conus$year))
+#write_csv(dat, "dat_pest_conusv1.csv")
+```
+
+# Step 2 creating variables median, temporal and spatial variables using original dataset 03/30/23
+```{r}
+#median quantity and temporal coverage of chemicals applied
+median_pest <- dat_conus %>%
+  group_by(state_name, county_fips_code, compound) %>%
+  summarize(median_pest = median(pest_applied, na.rm = TRUE),
+            n_yrs_repeat = sum(!is.na(pest_applied)),
+            years = list(unique(year[!is.na(pest_applied)])))|>
+  mutate(pct_yrs= round((n_yrs_repeat/28)*100, 2))
+
+
+#spatial coverage using states (percent states with any compound applied per year)
+state_cover <- median_pest %>%
+  group_by(compound) %>%
+  summarize(state_cvr = n_distinct(state_name[!is.na(median_pest)])) |>
+  mutate(pct_state_cvr = round((state_cvr/48)*100, 2))
+
+#join meadian_pest and state-cover
+dat_med_st_cvr<- left_join(median_pest, state_cover, by=c("compound"))
+
+######################################################################
+#Spatial coverage of chemicals applied (coverage that shows percent counties)
+summ <- median_pest %>%
+    group_by(state_name, compound) %>%
+    summarize(n_counties_pest = ifelse(any(!is.na(median_pest)),
+                                       n_distinct(county_fips_code[!is.na(median_pest)]), 0))
+
+#number of counties
+n_cnty<- median_pest %>%
+  group_by(state_name) %>%
+  summarize(num_counties = n_distinct(county_fips_code))
+
+#join n_cnty with spatial coverage to get percent spatial coverage
+summ_spat_pct<- left_join(summ,n_cnty, by="state_name") |>
+  mutate(pct_spat_cover = round((n_counties_pest/num_counties)*100, 2))
+  
+
+#########################################################################
+
+# Final data set that has median pesticide applied, pct spatial and temporal coverage
+
+chem_appl<- left_join(dat_med_st_cvr, summ_spat_pct, 
+                      by=c("state_name","compound"))
+
+chem_appl<- chem_appl |>
+  rename(state=state_name, pct_state_cvr = pct_state_cvr,
+         pct_cnty_cover=pct_spat_cover) |>
+  mutate(years = gsub("(^c\\(|\\)$)", "", years))
+
+# save same file in rda format as backup
+save(chem_appl, file = "chem_appl_spat_temp_cvr_v3.RDA")
+```
+
+#Step 3 chemical selection function
+```{r}
+compound_filter <- function(data, pct_yrs_thresh, pct_state_cvr_thresh, pct_cnty_cvr_thresh) {
+  
+  # Filter the data based on pct_yrs threshold
+  data <- data %>% group_by(compound) %>% filter(mean(pct_yrs) >= pct_yrs_thresh)
+  
+  # Filter the data based on pct_state_cvr threshold
+  data <- data %>% group_by(compound) %>% filter(mean(pct_state_cvr) >= pct_state_cvr_thresh)
+  
+  # Filter the data based on pct_cnty_cvr threshold
+  data <- data %>% group_by(compound) %>% filter(mean(pct_cnty_cover) >= pct_cnty_cvr_thresh)
+  
+  # Return unique list of compounds that match the criteria as a dataframe
+  unique(data$compound) %>% as.data.frame()
+}
+```
+
+# Different percentages generate different lists
+```{r}
+#Use file: load("chem_appl_spat_temp_cvr_v3.RDA")
+compound_filter<- compound_filter(chem_appl, 80, 80, 80)
+compound_filter<- compound_filter |> rename(compound = ".")
+write_csv(compound_filter, "chemical_list80_80_80.csv")
+```
+
+
+# Step 4 Creating a final subset of dataset with selected chemicals 05/03/23
+```{r}
+# read in the dataset
+load("chem_appl_spat_temp_cvr_v3.RDA")
+
+# Filter chem_appl based on the values in compound_filter
+chem_appl_filtered <- chem_appl %>%
+  filter(compound %in% compound_filter$compound)
+
+# Summarize pct_yrs by compound
+summary <- chem_appl_filtered %>%
+  group_by(compound) %>%
+  summarize(
+    mean_pct_yrs = mean(pct_cnty_cover),
+    median_pct_yrs = median(pct_cnty_cover),
+    max_pct_yrs = max(pct_cnty_cover),
+    min_pct_yrs = min(pct_cnty_cover),
+    n = n()
+  )
+
+save(chem_appl_filtered, file="chem_appl_filtered_v4.RDA")
+```
+
+# Step 5 Grouping the pesticides by class and creating final dataset
+```{r}
+
+# create a named vector of compound classes
+compound_classes <-list(Herbicide = c("2,4-D", "ATRAZINE", "ACETOCHLOR","CLETHODIM", "DICAMBA","GLYPHOSATE", 
+                                      "IMAZETHAPYR", "PARAQUAT", "PENDIMETHALIN","CHLORIMURON","METOLACHLOR",
+                                      "METRIBUZIN","METSULFURON", "NICOSULFURON", "PICLORAM", "SETHOXYDIM", 
+                                      "SIMAZINE","THIFENSULFURON","TRIBENURON METHYL", "TRICLOPYR", "TRIFLURALIN"),
+                        
+                        Insecticide = c("CARBARYL", "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA",
+                                        "DIMETHOATE", "ESFENVALERATE","PERMETHRIN"),
+                        
+                        Fungicide = c("CHLOROTHALONIL","MANCOZEB","PROPICONAZOLE"))
+
+# Create a new variable "class" in chem_appl_filtered
+chemi_class <- chem_appl_filtered %>% 
+  mutate(class = case_when(
+    compound %in% compound_classes[["Herbicide"]] ~ "Herbicide",
+    compound %in% compound_classes[["Insecticide"]] ~ "Insecticide",
+    compound %in% compound_classes[["Fungicide"]] ~ "Fungicide",
+    TRUE ~ NA_character_
+  ))
+
+# Convert "class" variable to factor
+chemi_class$class <- as.factor(chemi_class$class)
+
+# Print the first few rows of the resulting dataset
+head(chemi_class)
+
+write_csv(chemi_class, "final_chemv5.csv")
+
+# save same file in rda format as backup
+save(chemi_class, file = "final_chem_v5_backup.RDA")
+```
+
+
+06/05/24 # For summary characteristics of pesticides table
+```{r}
+library(dplyr)
+dat <- load("final_chem_v5_backup.RDA")
+
+# Assuming 'chemi_class' is dataframe
+chemi_class_grouped <- chemi_class %>%
+  group_by(compound) %>%
+  summarize(
+    median = mean(median_pest, na.rm = TRUE), # Calculate the median by taking the average of median
+    class = first(class), # Get the class for each compound
+    .groups = 'drop' # Drop grouping information
+  ) %>%
+  mutate(
+    median = round(median, 2), # Round median_pest to two decimal places
+    rank = rank(-median) # Create the rank based on the rounded median
+  ) %>%
+  select(rank, compound, class, median) %>%
+  arrange(rank)
+
+# Print the data to see the result
+print(chemi_class_grouped, n = 30)
+
+# save as csv format
+
+write_csv(chemi_class_grouped, "aim1_us_final_chem_median_mean_char.csv")
+
+
+# Approach 2, taking the sum of median instead of mean
+
+# Assuming 'chemi_class' is dataframe
+chemi_grouped <- chemi_class %>%
+  group_by(compound) %>%
+  summarize(
+    amount = sum(median_pest, na.rm = TRUE), # Calculate the amount by taking the sum of median
+    class = first(class), # Get the class for each compound
+    .groups = 'drop' # Drop grouping information
+  ) %>%
+  mutate(
+    amount = round(amount, 2), # Round median_pest to two decimal places
+    rank = rank(-amount) # Create the rank based on the rounded median
+  ) %>%
+  select(rank, compound, class, amount) %>%
+  arrange(rank)
+
+# Print the data to see the result
+print(chemi_grouped, n = 30)
+
+# save as csv format
+
+write_csv(chemi_grouped, "aim1_us_final_chem_median_sum_char.csv")
+
+
+
+
+```
+

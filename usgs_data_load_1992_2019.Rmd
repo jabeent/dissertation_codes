@@ -1,0 +1,90 @@
+---
+title: "usgs_data_load_1992_2019"
+author: "Taiba"
+date: "2023-05-03"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor,readr, readxl)
+```
+
+```{r}
+# Analysis of aim 1 creating pesticide profiles of CONUS and Nebraska for top 25 pesticides
+# importing USGS Pesticide national synthesis project data 1992 to 2019 using text files.R version 4.2.2 (2022-10-31)
+
+file_names <- list.files(path = "/Users/jabeentaiba/Desktop/Jabbeen/rdata/dissertation/raw_data_txt/",
+                         recursive = TRUE,
+                         pattern = "\\.txt$",
+                         full.names = TRUE) 
+
+dat <- file_names %>%
+  map_dfr(read.delim, header = TRUE, sep = "\t") %>%
+  clean_names()
+
+#9,562,214 observations
+save(dat, file = "/Users/jabeentaiba/Desktop/Jabbeen/rdata/dissertation/pest_raw_v1.RDA")
+```
+
+
+```{r}
+#loading raw data
+load("/Users/jabeentaiba/Desktop/Jabbeen/rdata/dissertation/pest_raw_v1.RDA")
+
+```
+
+
+#creating dataset with 48 CONUS states using R version 4.2.2 (2022-10-31)--"Innocent and Trusting"
+```{r}
+
+dat_conus <- dat |>
+  filter(state_fips_code %in% c("1","4","5","6","8","9","10","11","12", "13","16","17", "18",
+                                "19", "20","21","22","23","24","25","26","27","28","29",
+                                "30","31","32","33","34","35","36","37","38","39","40",
+                                "41","42","44","45","46","47","48","49","50","51","53","54",
+                                "55","56")) |>
+  mutate(state.name = case_when(state_fips_code == 1 ~"Alabama", state_fips_code== 4 ~"Arizona", state_fips_code==5 ~"Arkansas",
+                                state_fips_code == 6 ~"California",state_fips_code == 8 ~"Colorado", state_fips_code == 9 ~"Connecticut",
+                                state_fips_code == 10 ~"Delaware",state_fips_code == 11 ~"DC",state_fips_code == 12 ~"Florida",
+                                state_fips_code == 13 ~"Georgia",state_fips_code == 16 ~"Idaho",state_fips_code == 17 ~"Illinois",
+                                state_fips_code == 18 ~"Indiana",state_fips_code == 19 ~"Iowa",state_fips_code == 20 ~"Kansas",
+                                state_fips_code == 21 ~"Kentucky",state_fips_code == 22 ~"Louisiana",state_fips_code == 23 ~"Maine",
+                                state_fips_code == 24 ~"Maryland",state_fips_code == 25 ~"Massuchusetts",state_fips_code == 26 ~"Michigan",
+                                state_fips_code == 27 ~"Minnesota",state_fips_code == 28 ~"Mississipi",state_fips_code == 29 ~"Missouri",
+                                state_fips_code == 30 ~"Montana",state_fips_code == 31 ~"Nebraska",state_fips_code == 32 ~"Nevada",
+                                state_fips_code == 33 ~"New Hampshire",state_fips_code == 34 ~"New Jersy",state_fips_code == 35 ~"New Mexico",
+                                state_fips_code == 36 ~"New York",state_fips_code == 37 ~"North Carolina",state_fips_code == 38 ~"North Dakota",
+                                state_fips_code == 39 ~"Ohio",state_fips_code == 40 ~"Oklahoma",state_fips_code == 41 ~"Oregon",
+                                state_fips_code == 42 ~"Pennsylvania",state_fips_code == 44 ~"Rhode Island",state_fips_code == 45 ~"South Carolina",
+                                state_fips_code == 46 ~"South Dakota",state_fips_code == 47 ~"Tennessee",state_fips_code == 48 ~"Texas",
+                                state_fips_code == 49 ~"Utah",state_fips_code == 50 ~"Vermont",state_fips_code == 51 ~"Virginia",
+                                state_fips_code == 53 ~"Washington",state_fips_code == 54 ~"West Virginia",state_fips_code == 55 ~"Wisconsin",
+                                state_fips_code == 56 ~"Wyoming", TRUE ~ "Unknown"))|>
+ select(-c(epest_low_kg))|>
+  rename(pest_applied= epest_high_kg)|>
+clean_names()
+
+
+#count summary by state and year
+# Group data by state and year, and count number of observations in each group
+counts <- dat_conus %>% 
+  group_by(state_name, year) %>% 
+  summarize(observation_count = n()) |>
+  pivot_wider(names_from = year, values_from = observation_count)
+
+write_csv(counts, "/Users/jabeentaiba/Desktop/Jabbeen/rdata/dissertation/working_data/raw_cnt_by_state_year.csv")
+
+
+#formatting CONUS data
+# Convert columns to factors
+dat_conus <- dat_conus %>% 
+  mutate(state_fips_code = as.factor(state_fips_code),
+         county_fips_code = as.factor(county_fips_code),
+         compound = as.factor(compound),
+         year = as.factor(year))
+
+#CONUS data in rda format
+save(dat_conus, file = "pest_conus_v2.RDA")
+```
+

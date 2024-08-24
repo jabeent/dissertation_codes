@@ -1,0 +1,372 @@
+---
+title: "01.4_SVI_PCA_Spatial_analysis"
+author: "Taiba"
+date: "2024-03-07"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidycensus, leafsync,ggspatial, mapview, rmarkdown, knitr, stringr) #ggspatial will get spatial info
+# census_api_key("60cbacc5c89ceb76d50a175907d1a9af7a7f3a1b", install = TRUE)
+```
+
+#Code to check ACS Survey variables
+```{r}
+#load variables
+vars <- load_variables(2019, "acs5") #Loads all the variables
+
+vars <- load_variables(2019, "acs5/profile")
+
+#variables used for Social vulnerability
+#Minority race variables
+  #B02001_003 - Estimate!!Total:!!Black or African American alone
+  #B02001_004 - Estimate!!Total:!!American Indian and Alaska Native alone
+  #B02001_006 - Estimate!!Total:!!Native Hawaiian and Other Pacific Islanders
+  #B03002_012 - Estimate!!Total:!!Hispanic or Latino
+
+# No diploma/less than high school
+#B15003_016 - Estimate!!Total:!!12th grade, no diploma, EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+#B15003_013- Estimate!!Total:!!9th grade EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+#B15003_014- Estimate!!Total:!!10th grade EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+#B15003_015- Estimate!!Total:!!11th grade EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+
+# Below 200% Federal poverty level
+#C17002_002 Estimate!!Total:!!Under .50 RATIO OF INCOME TO POVERTY LEVEL IN THE PAST 12 months
+#C17002_003 Estimate!!Total:!!.50 to .99 RATIO OF INCOME TO POVERTY LEVEL IN THE PAST 12 MONTHS
+
+```
+
+#SVI Variables for 48 US States
+```{r}
+#get list of variables from 2015-2019 census
+acs_variable_list<- load_variables(2019, "acs5", cache = T)
+svi_us<- get_acs(geography = "county",
+                  state = c("al", "ar", "az", "ca", "co", "ct", "dc","de", "fl", "ga", "ia", "id",
+                  "il", "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms",
+                  "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or",
+                  "pa", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi", "wv", "wy", "ri"),
+                  year=2019,
+                  survey = "acs5",
+                 variables = c(Black_tot= "B02001_003", ameri_ind_tot= "B02001_004", native_hawai_tot= "B02001_006", hisp_latino_tot= "B03002_012", no_diploma= "B15003_016", bel_10th= "B15003_013",bel_11th= "B15003_014", bel_12th= "B15003_015", bel_pov1= "C17002_002", bel_pov2= "C17002_003"),
+                  geometry = TRUE,
+                  output = "wide") %>% clean_names()
+
+```
+
+
+```{r}
+# Separate county and state names
+svi_us <- svi_us %>%
+  separate(name, into = c("county", "state"), sep = ", ", remove = FALSE)
+
+# Create new variable "minority" by adding the specified variables
+#svi_us <- svi_us %>% 
+ # mutate(minority = black_tot_e + ameri_ind_tot_e + native_hawai_tot_e + hisp_latino_tot_e) %>%
+  
+# Convert 'geoid' column to numeric
+svi_us$geoid <- as.numeric(svi_us$geoid)
+
+# Checking for missing values
+missing <-svi_us %>% 
+  is.na() %>% 
+  colSums()
+print(missing) #no missing values
+
+##removing geometry variable (as_tibble) and saving it in csv and RDA format
+dat <- svi_us |>
+  as_tibble()|>
+  select(c(1,3:24)) |>
+  rename(geoid10= "geoid")
+
+# save svi data as csv file
+write.csv(dat,"svi_us_acs_extract.csv")
+
+# save same file in rda format as backup
+save(dat, file = "svi_us_acs.RDA")
+```
+
+#PCA Analysis of SVI_US
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidymodels, factoextra, ggfortify, gridExtra, knitr)
+
+dat<- read_csv("svi_us_acs_extract.csv")
+
+svi_pca <- dat[c(5:24)] 
+
+# 
+ final <- svi_pca[c(1, 3, 5, 7, 9, 11, 13, 15, 17,19)] #variables for svi_pca analysis
+ 
+# Calculate principal components
+#scale: a logical value indicating whether the variables should be scaled to have unit variance before the analysis takes place
+pca.ln <- prcomp(final, scale = TRUE)
+save(pca.ln, file = "svi_pca_ln.rda")
+```
+
+```{r}
+#load model object
+load("svi_pca_ln.rda")
+```
+
+```{r}
+eigenvalues_ln <- matrix(pca.ln$sdev^2) #eigenvalues
+perc_variance <- round(100*matrix(pca.ln$sdev^2/sum(pca.ln$sdev^2)),1) #variance
+
+#Summary table 
+eigenvalues_ln <- cbind(1:10, eigenvalues_ln, perc_variance) 
+colum_ln <- c("Principal Component", "Eigenvalues", "Percent Variance")
+eigenvalues_ln <- kable(eigenvalues_ln, col.names = colum_ln)
+eigenvalues_ln 
+```
+
+
+## Proportion of Variance Plots
+The first component explained 81% of the variance 
+```{r PVE plots}
+#Plots the proportion of variance explained by each component (scree plot)
+pve.ln <- pca.ln$sdev^2/sum(pca.ln$sdev^2) #proportion of variance explain by each component
+ 
+#log-transformed data
+fviz_eig(pca.ln, main = "Scaled SVI data",
+         xlab = "Principal component",
+         ylim = c(0,50))
+
+ggsave("svi_pca_screeplot.tiff",
+       width=6, height= 6, dpi=300)
+```
+
+
+```{r}
+#Extract the first  component with maximum variance
+svi_pc1 <- pca.ln$x[, 1]
+
+# Convert to data frame
+svi_pc1_df <- data.frame(svi_pc1)
+
+# Save the svi_pc1 as a CSV file
+write_csv(svi_pc1_df, "svi_pc1.csv")
+```
+
+#combining svi_pc1 with svi data file
+```{r}
+dat<- read_csv("svi_us_acs_extract.csv") #original svi data
+svi_pc1_df <- read_csv("svi_pc1.csv") #SVI PC1
+
+#combining svi_pc1 with svi data file
+dat1 <- dat[c(2:22)] # excluding "...1" variable
+
+## final file for svi_pc1 mapping
+dat_map<- cbind(dat1, svi_pc1_df)
+write_csv(dat_map, "svi_pc1_mapping.csv")
+
+```
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tmap, sp, sf, tigris, spdep)
+```
+
+#pesticide and pesticide PCA data
+```{r}
+#join statefp code with dat_fin
+state_fips<- read_csv("state_fips.csv")
+
+dat3<- read_csv("mapping_dat_final.csv") |> #pesticide and PCA data adding state fips code
+  left_join(state_fips, by="state") |>
+  rename(statefp="state_fips_code", countyfp="county_fips_code")
+```
+
+#CONUS shapefile to join pesticide/pca data
+```{r}
+state_list<- list("al", "ar", "az", "ca", "co", "ct", "dc", "de", "fl", "ga", "ia", "id",
+                  "il", "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms",
+                  "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or",
+                  "pa", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi", "wv", "wy", "ri")
+
+us_counties <- counties(state = state_list, cb = FALSE, resolution = "500k", year = "2019", class="sf") |>
+  clean_names()
+
+us_counties$countyfp <- as.numeric(us_counties$countyfp)
+us_counties$statefp <- as.numeric(us_counties$statefp)
+us_counties$geoid <-   as.numeric(us_counties$geoid)
+```
+
+```{r}
+dat_fin_pest<- left_join(us_counties, dat3, by=c("statefp","countyfp")) |>
+  rename(geoid10= "geoid")
+```
+
+#Adding statefp code to SVI data
+```{r}
+svi_fin <- read_csv("svi_pc1_mapping.csv") |>
+    left_join(state_fips, by="state") |>
+  rename(statefp="state_fips_code")
+```
+
+#joining Pesticide PCA data with SVI PCA data
+##### Use this dataset for bivariate mapping of pesticide PC1 and Social vulnerability PC1
+###########################################################################################################################
+```{r}
+
+final_svi_pest <- left_join(dat_fin_pest, svi_fin, by = c("geoid10"))
+
+
+final_svi_pest_plt<- final_svi_pest |>
+  select(c("statefp.x" , "state.y", "countyfp", "countyns", "geoid10", "name",
+           "pc_1" , "svi_pc1",  "statefp.y", "geometry"))|>
+  mutate(pc_1 = if_else(is.na(pc_1), min(pc_1, na.rm = TRUE), pc_1))|>
+  mutate(svi_pc1 = if_else(is.na(svi_pc1), min(svi_pc1, na.rm = TRUE), svi_pc1))
+
+save(final_svi_pest_plt, file="final_svi_pest_bivarate_data.rda")
+```
+
+
+#SVI- PC1 Mapping
+```{r}
+library(viridis)
+library(viridisLite)
+
+svi_index <- "svi_pc1"
+
+# Use a color-blind safe palette from viridis
+#color_palette <- viridis_pal()(5)
+
+w <- tm_shape(final_svi_pest_plt) +
+  tm_polygons(col = svi_index,
+             breaks = quantile(final_svi_pest_plt[[svi_index]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+            palette = viridis::viridis(4, alpha = 1, direction = 1, option = "D"),
+              title = "Mapping of SVI Index using ACS 2015-2019 Estimates") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_layout(legend.title.size = 1.2,
+            legend.text.size = 1) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "US_SVI.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+#Bivariate mapping in ggplot using biscale package
+# https://chris-prener.github.io/biscale/articles/biscale.html
+```{r}
+library(biscale)
+library(cowplot)
+library(sf)
+```
+
+#step 1 preparing data- create bi_class variable 
+```{r}
+data_test <- bi_class(final_svi_pest_plt, x = pc_1, y = svi_pc1, style = "quantile", dim = 4)
+```
+
+#bivariate summary for discussion purposes
+```{r}
+summary_bi_variate <- data_test |>
+  filter(bi_class == "4-4") |>
+    as_tibble() |>
+  select(c(2,5,6))
+
+table_data <- summary_bi_variate %>%
+  group_by(state.y) %>%
+  summarise(names = paste(name, collapse = ", "),
+            count_names = n()) %>%
+  ungroup()
+
+write_csv(table_data, "high_bivariate_val.csv")
+```
+
+#step 2- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_test, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 4) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 4,
+                    xlab = "Pesticide index ",
+                    ylab = "Social vulnerability index",
+                    size = 5)+
+  theme(text = element_text(size = 6))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("US_bivariate_map.tiff",
+       width = 12, height = 12, dpi = 300)
+```
+
+# Creating a bivariate map showing only high pesticide and high SVI by setting "bi_class=4-4"
+#step 1 preparing data- create bi_class variable 
+```{r}
+data_test <- bi_class(final_svi_pest_plt, x = pc_1, y = svi_pc1, style = "quantile", dim = 4)
+
+# Filter the data set for rows where bi_class is "4-4"
+data_test_filtered <- data_test|>
+  filter(bi_class == "4-4") |>
+  mutate(geoid = as.character(geoid10))
+```
+
+#US county shape file
+```{r}
+state_list <- list("AL", "AR", "AZ", "CA", "CO", "CT", "DC", "DE", "FL", "GA", "IA", "ID",
+                   "IL", "IN", "KS", "KY", "LA", "MA", "MD", "ME", "MI", "MN", "MO", "MS",
+                   "MT", "NC", "ND", "NE", "NH", "NJ", "NM", "NV", "NY", "OH", "OK", "OR",
+                   "PA", "SC", "SD", "TN", "TX", "UT", "VA", "VT", "WA", "WI", "WV", "WY", "RI")
+
+
+us_counties <- states(resolution = "500k", 
+                     year = "2019", 
+                     class="sf") |>
+  clean_names() |>
+  filter(stusps %in% state_list)
+```
+
+#Join filtered counties to shapefile
+```{r}
+df_map<- st_join(us_counties, data_test_filtered)
+```
+
+
+#step 2- Bivariate Mapping with Biscale
+```{r}
+# create map
+ggplot() +
+  geom_sf(data= us_counties, color="black", fill="white", size="0.2")+
+  geom_sf(data = data_test_filtered, mapping = aes(fill = bi_class), 
+          fill="#CC79A7",
+          color = "#CC79A7", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  theme_void()
+```
+
+
+
+```{r}
+ggsave("US_high_high_bivariate_map.tiff",
+       width = 12, height = 12, dpi = 300)
+```
+

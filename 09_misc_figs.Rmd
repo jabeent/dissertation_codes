@@ -1,0 +1,147 @@
+---
+title: "09_misc_figs"
+author: "Taiba"
+date: "2023-07-05"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor,rsconnect)
+```
+
+```{r}
+load("~/Desktop/Jabbeen/jt_dissert/jt_dissert/pest_conus_v2.RDA")
+dat_conus$year<- as.numeric(as.character(dat_conus$year))
+
+```
+
+#aggregate by year and state
+```{r}
+state_data <- dat_conus  %>%
+  group_by(state_fips_code, state_name, year, compound) %>%
+  summarize(total_pest_applied = as.numeric(median(pest_applied)))
+rm(dat_conus)
+```
+
+#data scaling
+
+```{r}
+scaled_data <- state_data %>%
+  group_by(compound) %>%
+  mutate(scaled_pest_applied = if_else(is.na(total_pest_applied), NA_real_, (total_pest_applied - min(total_pest_applied, na.rm = TRUE)) / (max(total_pest_applied, na.rm = TRUE) - min(total_pest_applied, na.rm = TRUE)) * 2 - 1))
+```
+
+#filter chemicals
+```{r}
+compound_classes <- list(
+  Herbicide_1 = c("2,4-D", "ATRAZINE", "ACETOCHLOR", "CLETHODIM", "DICAMBA", "GLYPHOSATE", "IMAZETHAPYR"),
+  Herbicide_2=c("PARAQUAT", "PENDIMETHALIN", "CHLORIMURON", "METOLACHLOR", "METRIBUZIN", "METSULFURON", "NICOSULFURON"),
+  Herbicide_3=c("PICLORAM", "SETHOXYDIM", "SIMAZINE", "THIFENSULFURON", "TRIBENURON METHYL", 
+                "TRICLOPYR", "TRIFLURALIN"),
+  Insecticide = c("CARBARYL", "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA", "DIMETHOATE", "ESFENVALERATE", "PERMETHRIN"),
+  Fungicide = c("CHLOROTHALONIL", "MANCOZEB", "PROPICONAZOLE")
+)
+
+filtered_data <- map_df(compound_classes$Fungicide, ~ scaled_data %>% 
+                          filter(compound %in% .x))
+```
+
+#heatmap
+```{r}
+ggplot(filtered_data, aes(state_name, year, fill = scaled_pest_applied)) +
+  geom_tile(color = "white", size = 0.1) +
+  scale_fill_viridis(name = "") +
+  facet_grid(compound ~ ., switch = "y") +
+  theme_bw(base_size = 8) +
+  # guides(fill = "none") +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    strip.background = element_rect(fill = "white"),
+    strip.text.y = element_text(angle = 0, hjust = 0, vjust = 0.5),
+    legend.text = element_text(angle = 90, hjust = 0, vjust = 0.5),
+    legend.key.width = unit(0.1, "cm")
+  )
+
+ggsave("chemical_htmp_fungicide.tiff", 
+       width = 9,height = 12,
+       dpi=300)
+```
+
+
+#shiny app
+```{r}
+library(shiny)
+library(ggplot2)
+library(viridis)
+
+# Define the UI
+ui <- fluidPage(
+  titlePanel("Temporal trends - Pesticides applied - CONUS - units scaled"),
+  
+  fluidRow(
+    column(width = 12,
+           plotOutput("compound_plot", height = "750px"),
+           align = "center"
+    )
+  ),
+  
+  fluidRow(
+    column(width = 12,
+           textInput("compound_search", "Search Compound:", ""),
+           align = "center"
+    )
+  ),
+  
+  fluidRow(
+    column(width = 12,
+           sliderInput("compound_input", "Select Compound:",
+                       min = 1, max = length(unique(scaled_data$compound)),
+                       value = 1, step = 1),
+           align = "center"
+    )
+  )
+)
+
+# Define the server
+server <- function(input, output) {
+  filtered_data <- reactive({
+    search_term <- input$compound_search
+    if (search_term != "") {
+      scaled_data %>%
+        filter(grepl(search_term, compound, ignore.case = TRUE))
+    } else {
+      scaled_data
+    }
+  })
+  
+  output$compound_plot <- renderPlot({
+    selected_compound <- unique(filtered_data()$compound)[input$compound_input]
+    filtered_compound <- filtered_data() %>%
+      filter(compound == selected_compound)
+    
+    ggplot(filtered_compound, aes(year, state_name, fill = scaled_pest_applied)) +
+      geom_tile(color = "white", size = 0.1) +
+      scale_fill_viridis(name = "") +
+      facet_grid(compound ~ .) +
+      scale_x_continuous(breaks = filtered_compound$year, expand = c(0, 0)) +
+      theme_bw(base_size = 8) +
+      labs(title = paste("Compound:", selected_compound))
+  })
+}
+
+# Run the Shiny app
+shinyApp(ui = ui, server = server)
+
+
+# Save the Shiny app as an HTML file
+#shinyAppDir(
+ # appDir = ".",  # Set the directory where you want to save the app
+ # appFile = "my_shiny_app",  # Set the name of the app file (without the extension)
+ # launch.browser = FALSE  # Prevent the app from automatically opening in a web browser)
+```
+
+

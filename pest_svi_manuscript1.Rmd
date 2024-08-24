@@ -1,0 +1,1129 @@
+---
+title: "Manuscript1"
+author: "Taiba"
+date: "2024-07-23"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor,reshape2)
+```
+
+# Step 1 Original raw pesticide dataset for 48 US States
+```{r}
+load("~/Desktop/Jabbeen/jt_dissert/jt_dissert/pest_conus_v2.RDA")
+dat_conus$year<- as.numeric(as.character(dat_conus$year))
+#write_csv(dat, "dat_pest_conusv1.csv")
+```
+
+# Step 2 creating variables median, temporal and spatial variables using original dataset 
+```{r}
+#median quantity and temporal coverage of chemicals applied
+median_pest <- dat_conus %>%
+  group_by(state_name, county_fips_code, compound) %>%
+  summarize(median_pest = median(pest_applied, na.rm = TRUE),
+            n_yrs_repeat = sum(!is.na(pest_applied)),
+            years = list(unique(year[!is.na(pest_applied)])))|>
+  mutate(pct_yrs= round((n_yrs_repeat/28)*100, 2))
+
+
+#spatial coverage using states (percent states with any compound applied per year)
+state_cover <- median_pest %>%
+  group_by(compound) %>%
+  summarize(state_cvr = n_distinct(state_name[!is.na(median_pest)])) |>
+  mutate(pct_state_cvr = round((state_cvr/48)*100, 2))
+
+#join meadian_pest and state-cover
+dat_med_st_cvr<- left_join(median_pest, state_cover, by=c("compound"))
+
+######################################################################
+#Spatial coverage of chemicals applied (coverage that shows percent counties)
+summ <- median_pest %>%
+    group_by(state_name, compound) %>%
+    summarize(n_counties_pest = ifelse(any(!is.na(median_pest)),
+                                       n_distinct(county_fips_code[!is.na(median_pest)]), 0))
+
+#number of counties
+n_cnty<- median_pest %>%
+  group_by(state_name) %>%
+  summarize(num_counties = n_distinct(county_fips_code))
+
+#join n_cnty with spatial coverage to get percent spatial coverage
+summ_spat_pct<- left_join(summ,n_cnty, by="state_name") |>
+  mutate(pct_spat_cover = round((n_counties_pest/num_counties)*100, 2))
+  
+
+#########################################################################
+
+# Final data set that has median pesticide applied, pct spatial and temporal coverage
+
+chem_appl<- left_join(dat_med_st_cvr, summ_spat_pct, 
+                      by=c("state_name","compound"))
+
+chem_appl<- chem_appl |>
+  rename(state=state_name, pct_state_cvr = pct_state_cvr,
+         pct_cnty_cover=pct_spat_cover) |>
+  mutate(years = gsub("(^c\\(|\\)$)", "", years))
+
+# save same file in rda format as backup
+save(chem_appl, file = "chem_appl_spat_temp_cvr_v3.RDA")
+```
+
+#Step 3 chemical selection function
+```{r}
+compound_filter <- function(data, pct_yrs_thresh, pct_state_cvr_thresh, pct_cnty_cvr_thresh) {
+  
+  # Filter the data based on pct_yrs threshold
+  data <- data %>% group_by(compound) %>% filter(mean(pct_yrs) >= pct_yrs_thresh)
+  
+  # Filter the data based on pct_state_cvr threshold
+  data <- data %>% group_by(compound) %>% filter(mean(pct_state_cvr) >= pct_state_cvr_thresh)
+  
+  # Filter the data based on pct_cnty_cvr threshold
+  data <- data %>% group_by(compound) %>% filter(mean(pct_cnty_cover) >= pct_cnty_cvr_thresh)
+  
+  # Return unique list of compounds that match the criteria as a dataframe
+  unique(data$compound) %>% as.data.frame()
+}
+```
+
+# Different percentages generate different lists
+```{r}
+#Use file: load("chem_appl_spat_temp_cvr_v3.RDA")
+compound_filter<- compound_filter(chem_appl, 80, 80, 80)
+compound_filter<- compound_filter |> rename(compound = ".")
+write_csv(compound_filter, "chemical_list80_80_80.csv")
+```
+
+
+# Step 4 Creating a final subset of dataset with selected chemicals 
+```{r}
+# read in the dataset
+load("chem_appl_spat_temp_cvr_v3.RDA")
+
+# Filter chem_appl based on the values in compound_filter
+chem_appl_filtered <- chem_appl %>%
+  filter(compound %in% compound_filter$compound)
+
+# Summarize pct_yrs by compound
+summary <- chem_appl_filtered %>%
+  group_by(compound) %>%
+  summarize(
+    mean_pct_yrs = mean(pct_cnty_cover),
+    median_pct_yrs = median(pct_cnty_cover),
+    max_pct_yrs = max(pct_cnty_cover),
+    min_pct_yrs = min(pct_cnty_cover),
+    n = n()
+  )
+
+save(chem_appl_filtered, file="chem_appl_filtered_v4.RDA")
+```
+
+# Step 5 Grouping the pesticides by class and creating final dataset
+```{r}
+
+# create a named vector of compound classes
+compound_classes <-list(Herbicide = c("2,4-D", "ATRAZINE", "ACETOCHLOR","CLETHODIM", "DICAMBA","GLYPHOSATE", 
+                                      "IMAZETHAPYR", "PARAQUAT", "PENDIMETHALIN","CHLORIMURON","METOLACHLOR",
+                                      "METRIBUZIN","METSULFURON", "NICOSULFURON", "PICLORAM", "SETHOXYDIM", 
+                                      "SIMAZINE","THIFENSULFURON","TRIBENURON METHYL", "TRICLOPYR", "TRIFLURALIN"),
+                        
+                        Insecticide = c("CARBARYL", "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA",
+                                        "DIMETHOATE", "ESFENVALERATE","PERMETHRIN"),
+                        
+                        Fungicide = c("CHLOROTHALONIL","MANCOZEB","PROPICONAZOLE"))
+
+# Create a new variable "class" in chem_appl_filtered
+chemi_class <- chem_appl_filtered %>% 
+  mutate(class = case_when(
+    compound %in% compound_classes[["Herbicide"]] ~ "Herbicide",
+    compound %in% compound_classes[["Insecticide"]] ~ "Insecticide",
+    compound %in% compound_classes[["Fungicide"]] ~ "Fungicide",
+    TRUE ~ NA_character_
+  ))
+
+# Convert "class" variable to factor
+chemi_class$class <- as.factor(chemi_class$class)
+
+# Print the first few rows of the resulting dataset
+head(chemi_class)
+
+write_csv(chemi_class, "final_chemv5.csv")
+
+# save same file in rda format as backup
+save(chemi_class, file = "final_chem_v5_backup.RDA")
+```
+
+ # For summary characteristics of pesticides table/manuscript
+```{r}
+library(dplyr)
+dat <- load("final_chem_v5_backup.RDA")
+
+# Assuming 'chemi_class' is dataframe
+chemi_class_grouped <- chemi_class %>%
+  group_by(compound) %>%
+  summarize(
+    median = mean(median_pest, na.rm = TRUE), # Calculate the median by taking the average of median
+    class = first(class), # Get the class for each compound
+    .groups = 'drop' # Drop grouping information
+  ) %>%
+  mutate(
+    median = round(median, 2), # Round median_pest to two decimal places
+    rank = rank(-median) # Create the rank based on the rounded median
+  ) %>%
+  select(rank, compound, class, median) %>%
+  arrange(rank)
+
+# Print the data to see the result
+print(chemi_class_grouped, n = 30)
+
+# save as csv format
+
+write_csv(chemi_class_grouped, "aim1_us_final_chem_median_mean_char.csv")
+
+
+# Approach 2, taking the sum of median instead of mean
+
+# Assuming 'chemi_class' is dataframe
+chemi_grouped <- chemi_class %>%
+  group_by(compound) %>%
+  summarize(
+    amount = sum(median_pest, na.rm = TRUE), # Calculate the amount by taking the sum of median
+    class = first(class), # Get the class for each compound
+    .groups = 'drop' # Drop grouping information
+  ) %>%
+  mutate(
+    amount = round(amount, 2), # Round median_pest to two decimal places
+    rank = rank(-amount) # Create the rank based on the rounded median
+  ) %>%
+  select(rank, compound, class, amount) %>%
+  arrange(rank)
+
+# Print the data to see the result
+print(chemi_grouped, n = 30)
+
+# save as csv format
+write_csv(chemi_grouped, "aim1_us_final_chem_median_sum_char.csv")
+```
+
+
+```{r}
+load("final_chem_v5_backup.RDA")
+```
+
+#boxplots for each chemical
+```{r}
+
+ggplot(chemi_class, aes(y = compound, x = log(median_pest))) +
+  geom_boxplot() +
+  labs(title = "",
+       x = "Median pesticide applied (1992 - 2019) - Log scale", 
+       y = "") +
+  facet_grid(factor(class, levels=c("Herbicide", "Insecticide", "Fungicide"))~ ., scales = "free_y", 
+             switch = "y", space = "free_y") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 10.5),
+        axis.text.y = element_text(size = 10.5),
+        strip.text = element_text(colour = "black", size = 10.5),
+        strip.text.x = element_text(colour = "black", size = 10.5),
+        strip.text.y = element_text(colour = "black", size = 7))
+
+
+#ggsave("chemical_box_plt.tiff", 
+      # width = 6,height = 9,
+      # dpi=300)
+```
+
+#correlation matrix
+```{r}
+# pivot from long to wide format
+chemi_class_wide <- chemi_class[c(1:4)] %>%
+  pivot_wider(names_from = compound, values_from = median_pest)|>
+  mutate_at(vars(3:32), ~log10(.+0.0000001)) 
+
+# LOAD new index variables
+index_vars_df<- read_csv("index_scores.csv")
+
+# join index variables with the log-transformed chemical data
+chem_df<- cbind(chemi_class_wide, index_vars_df)
+```
+
+#correlation matrix
+```{r}
+desired_order <- c("2,4-D", "ATRAZINE", "ACETOCHLOR","CLETHODIM", "DICAMBA","GLYPHOSATE", 
+                                      "IMAZETHAPYR", "PARAQUAT", "PENDIMETHALIN","CHLORIMURON","METOLACHLOR",
+                                      "METRIBUZIN","METSULFURON", "NICOSULFURON", "PICLORAM", "SETHOXYDIM", 
+                                      "SIMAZINE","THIFENSULFURON","TRIBENURON METHYL", "TRICLOPYR", "TRIFLURALIN","CARBARYL", "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA",
+                                        "DIMETHOATE", "ESFENVALERATE","PERMETHRIN", "CHLOROTHALONIL","MANCOZEB","PROPICONAZOLE")
+
+dat <- chem_df |>
+    rename_all(~str_to_title(.))
+
+#correlation matrix
+cormat<- round(x=cor(dat[c(3:35)], method = "spearman", 
+                     use= "complete.obs"), digits=2) |>
+  melt() 
+
+
+ggplot(cormat, aes(x=Var2, y=Var1, fill=value)) +
+  geom_tile(color="white")+
+  scale_fill_gradient2(low="red", high="blue", mid="white",
+                       midpoint=0,
+                       limit=c(-1,1), space= "Lab",
+                       name="Spearman Correlation | Pesticides applied in US Counties (1992-2019)")+
+  geom_text(aes(label = round(value, 2)), size = 3, color = "black") + # Add text labels
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1),
+        axis.text.y = element_text(angle = 0, vjust = 1, size = 12, hjust = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "bottom", legend.box = "horizontal")+
+  coord_fixed()
+
+ggsave("chemical_correlations_w_index.tiff",
+       width=12, height= 10, dpi=300)
+```
+
+## Pesticide Principal component analysis
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidymodels, factoextra, ggfortify, gridExtra, knitr)
+```
+
+```{r}
+chemi_class<- read_csv("final_chemv5.csv") |>
+  filter(compound != "PICLORAM" & compound != "METSULFURON" & compound != "TRICLOPYR")
+```
+
+```{r}
+# pivot from long to wide format contains 3069 obs with 28 variables
+chemi_wide <- chemi_class[c(1:4)] |>
+  pivot_wider(names_from = compound, values_from = median_pest) |>
+  select(-c(state, county_fips_code))|>
+ mutate_at(vars(1:23), ~log10(.+0.0000001)) 
+
+#replacing NA values due to missing information from original data from EPA
+# replace all missing values with log(0.0000001) = -16.1181
+chemi_wide_new <- chemi_wide |>
+  mutate(across(everything(), ~replace(., is.na(.), -16.1181)))
+
+# Calculate principal components
+#scale: a logical value indicating whether the variables should be scaled to have unit variance before the analysis takes place
+pca.ln <- prcomp(chemi_wide_new, scale = TRUE)
+save(pca.ln, file = "pca_ln.rda")
+```
+########################################################################
+########################################################################
+        WORK FROM HERE
+
+########################################################################
+########################################################################
+
+```{r}
+#load model object
+load("pca_ln.rda")
+```
+
+```{r}
+eigenvalues_ln <- matrix(pca.ln$sdev^2) #eigenvalues
+perc_variance <- round(100*matrix(pca.ln$sdev^2/sum(pca.ln$sdev^2)),1) #variance
+
+#Summary table 
+eigenvalues_ln <- cbind(1:24, eigenvalues_ln, perc_variance) 
+colum_ln <- c("Principal Component", "Eigenvalues", "Percent Variance")
+eigenvalues_ln <- kable(eigenvalues_ln, col.names = colum_ln)
+eigenvalues_ln 
+```
+
+## Proportion of Variance Plots
+The first two components explained 55% of the variance 
+```{r PVE plots}
+#Plots the proportion of variance explained by each component (scree plot)
+pve.ln <- pca.ln$sdev^2/sum(pca.ln$sdev^2) #proportion of variance explain by each component
+ 
+#log-transformed data
+fviz_eig(pca.ln, main = "",
+         xlab = "Principal component",
+         ylim = c(0,50))
+
+ggsave("pca_screeplot.tiff",
+       width=6, height= 6, dpi=300)
+```
+
+
+## Data Visualization of eigenvectors w/ Log-Transformed PCA Results
+Loadings are the weights that each chemical contribute to the component. Scores are the sum of loadings multiply by concentration of each chemical for each person. So you get a loading for each chemical in each component and also a total loading for each principal component (which is the sum of the chemical's loadings). You also get a score for each person (each observation) which is the sum of the scores of each chemical (loading*chemical concentration). So for each person (observation) you have a score for each principal component. Each principal component also has a score which is the sum of the scores within the principal component. 
+
+```{r}
+pca.ln.ld <- as.data.frame.matrix(pca.ln$rotation) ## rotation is the loadings variable within the pca output.
+pca.ln.ld$chem <- row.names(pca.ln.ld)
+
+#run compounds_classes from file 01_chemicals_sorting.Rmd
+# Convert the list to a tibble and unnest the list
+loadings_pca <- pca.ln.ld |>
+  mutate(Group = case_when(
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Herbicide ~ "Herbicide",
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Insecticide ~ "Insecticide",
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Fungicide ~ "Fungicide",
+    TRUE ~ NA_character_
+  ))
+
+plot_loadings_pca <- loadings_pca |> 
+  gather(key = "PC", value = "Loading", -chem, -Group) |> as.tibble()
+
+################################################################
+chem_order <- c("2,4-D", "ATRAZINE", "ACETOCHLOR","CLETHODIM", "DICAMBA","GLYPHOSATE", 
+                                      "IMAZETHAPYR", "PARAQUAT", "PENDIMETHALIN","CHLORIMURON","METOLACHLOR",
+                                      "METRIBUZIN", "NICOSULFURON","SETHOXYDIM", 
+                                      "SIMAZINE","THIFENSULFURON","TRIBENURON METHYL", "TRICLOPYR", "TRIFLURALIN","CARBARYL",         "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA","DIMETHOATE", "ESFENVALERATE","PERMETHRIN","CHLOROTHALONIL","MANCOZEB","PROPICONAZOLE")
+
+plot_loadings_pca |> 
+  filter(PC %in% c("PC1", "PC2", "PC3")) |> 
+  mutate(PC = as.factor(PC),
+         PC = fct_recode(PC, "PC 1" = "PC1",
+         "PC 2" = "PC2",
+         "PC 3" = "PC3"),
+         chem = factor(chem, levels = chem_order)) |> 
+  ggplot(aes(x = chem, 
+             y = Loading, 
+             fill=Group)) + 
+  geom_col() +
+  facet_wrap(~ PC) + 
+  theme_bw() + 
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "white")) +
+  geom_hline(yintercept = 0, size = 0.2) +
+  labs(x = "Chemicals",
+       y = "Loadings")
+
+ggsave("pca_loadings.tiff",
+       width=10, height= 7, dpi=300)
+```
+
+## Principal Component Biplot w/ Log-Transformed PCA Results
+
+```{r PCA biplot}
+#Creates a biplot showing the loadings for principal component 1 and 2. 
+autoplot(pca.ln, data = chemi_wide_new, size = 0.8, colour = 'blue', alpha = 0.5,
+         loadings = TRUE, loadings.colour = 'orange',
+         loadings.label = TRUE, loadings.label.repel = T, 
+         loadings.label.size = 2.5, loadings.label.colour = 'black',
+         main = "Principal Component Analysis Biplot")
+
+ggsave("pca_biplot.tiff",
+       width=8, height= 8, dpi=300)
+```
+
+## PCA index score using median magnitude of first 5 components(or those with eigen values>=1) using Naveen's approach. We extract the first 5 components using [, 1:5]. Then, for each observation, we calculated the magnitude by taking the square root of the sum of squares of the 5 component values. Finally, we estimate the median of these magnitudes and store it in the variable score.
+
+```{r}
+# Naveen - Median magnitude
+#Extract the first 5 components
+first_5_components <- pca.ln$x[, 1:5]
+
+# Calculate the magnitude of each observation's first 5 components
+component_magnitudes <- apply(first_5_components, 1, function(x) sqrt(sum(x^2))) |>
+  as.data.frame() |>
+  rename_at(1, ~"med_magni")
+```
+
+```{r}
+### Method 2- PCA analysis Dr.Beseler approach
+#weighted scores
+factor_loadings <- pca.ln$rotation
+
+# Extract the scores with rotation
+scores <- pca.ln$x
+
+# multiplication of pesticide value with loading values by each county
+result_test <- tibble(result = scores * chemi_wide_new)
+
+#extract the multiplied values -> perform row sum of multiplied values -> retain only the index variable
+result_test_df<- pull(result_test, result) |>
+  mutate(chem_index= rowSums(across(everything())))|>
+  select(chem_index)
+
+#combine chem_index and median_magnitude into a dataframe
+new_index_vars<- cbind(result_test_df, component_magnitudes)
+
+new_index_vars_withpc1<- cbind(new_index_vars, pca.ln$x[,1])
+```
+
+```{r}
+## Save the summed score as a CSV file
+write_csv(new_index_vars_withpc1, "index_scores.csv")
+
+```
+
+#combine index variables with chemicals applied data
+```{r}
+chem_mapping <- chemi_class[c(1:4)] |>
+  pivot_wider(names_from = compound, values_from = median_pest) |>
+  mutate_at(vars(3:29), ~log10(.+0.0000001)) |>
+  mutate(across(everything(), ~replace(., is.na(.), -16.1181)))
+
+# final file for mapping
+dat_map<- cbind(chem_mapping, new_index_vars_withpc1)
+write_csv(dat_map, "mapping_dat_final.csv")
+```
+
+#######################################################################################################################################
+########################################################################################################################################
+
+#### Exploratory spatial data analysis using pesticide data/pesticide PC1
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tmap, sp, sf, tigris, spdep)
+```
+
+```{r}
+#join statefp code with dat_fin
+state_fips<- read_csv("state_fips.csv")
+
+dat<- read_csv("mapping_dat_final.csv") |>
+  left_join(state_fips, by="state") |>
+  rename(statefp="state_fips_code", countyfp="county_fips_code")
+```
+
+#CONUS shapefile
+```{r}
+state_list<- list("al", "ar", "az", "ca", "co", "ct", "dc", "de", "fl", "ga", "ia", "id",
+                  "il", "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms",
+                  "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or",
+                  "pa", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi", "wv", "wy", "ri")
+
+us_counties <- counties(state = state_list, cb = FALSE, resolution = "500k", year = "2019", class="sf") |>
+  clean_names()
+
+us_counties$countyfp <- as.numeric(us_counties$countyfp)
+us_counties$statefp <- as.numeric(us_counties$statefp)
+```
+
+#Producing US maps
+# Created 12/05/23
+```{r}
+library(viridis)
+library(viridisLite)
+
+chem <- "pc_1"
+
+# Use a color-blind safe palette from viridis
+#color_palette <- viridis_pal()(5)
+
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+             breaks = quantile(dat_fin[[chem]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+            palette = viridis::viridis(4, alpha = 1, direction = 1, option = "D"),
+              title = "Mapping of pesticide index (PC1) for most-applied pesticides from 1992-2019") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_layout(legend.title.size = 1.2,
+            legend.text.size = 1) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "US_pestindex.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+#different color map -created initially
+
+```{r}
+w<-tm_shape(dat_fin)+
+  tm_polygons(col="pc_1",
+              breaks=quantile(dat_fin$pc_1, probs = c(0,.25,.5,.75,1)),
+              legend.is.portrait=F,
+              palette=c("#999999", "#E69F00", "#0072B2", "#D55E00"),
+              title="pc_1")+
+  tm_borders("gray90", alpha=.002)+
+  tm_layout(legend.title.size = 1.2,
+            legend.text.size = 1,
+            legend.stack = "horizontal",
+            frame = F)
+
+tmap_save(w,"pc1.tiff",
+          width = 12, height=12, dpi=150)
+```
+
+# Exploratory spatial data analysis (ESDA) - to perform this we are converting neighbors list object to spatial weights
+#spatial correlation- understanding spatial neighborhoods using poly2nb() and generating the spatial weights matrix using nb2listw() and specifying style ="B" produces binary weights, where neighbors are given the weight 1 and non-neighbors take the weight of 0. This style of weights is useful for producing neighborhood sums.
+
+# understanding spatial neighborhoods/ contiguity-based neighbors, used when geographic features are polygons. poly2nb(), is used for queen’s case neighbors, where all polygons that share at least one vertex are considered neighbors. This function take an sf object as an argument and produce a neighbors list object
+```{r}
+neighbors <- poly2nb(col_sp, queen = TRUE)
+
+summary(neighbors)
+```
+# Summary interpretation- On average, the counties in the CONUS area have 5.93 neighbors. The minimum number of neighbors in the dataset is 1 (there are 13 such tracts), and the maximum number of neighbors is 14 (the tract at row index 2697)
+
+# Calculating spatial weights
+```{r}
+col_sp <- as(dat_fin, "Spatial")
+col_nb <- poly2nb(col_sp) 
+col_listw <- nb2listw(col_nb, style = "B") # listw version of the neighborhood
+
+```
+
+# Spatial autocorrelation: The concept of spatial autocorrelation relates to Waldo Tobler’s famous “first law of geography,” which reads (Tobler 1970): Everything is related to everything else, but near things are more related than distant things.
+#spatial clustering- data values tend to be similar to neighboring data values
+
+# Global spatial autocorrelation using Moron's I using spdep package. It gives the relationship between observations and their neighbors 
+
+```{r}
+moran.test(dat_fin$pc_1, listw = col_listw)
+```
+
+# Interpretation of Moran's I- The Moran’s I statistic of 0.428 is positive, and the small p-value suggests that we reject the null hypothesis of spatial randomness in our dataset.As the statistic is positive, it suggests that our data are spatially clustered;a negative statistic would suggest spatial uniformity
+
+
+
+# Identifying clusters and spatial outliers with local indicators of spatial association (LISA), an extension of Global Moran's I statistic using localmoran_perm() function, implements LISA where statistical significance is calculated based on a conditional permutation-based approach. 
+
+```{r}
+set.seed(1983) #random number seed is set given that we are using the conditional permutation approach to calculating statistical significance
+
+dat_fin$scaled_pc_1 <- as.numeric(scale(dat_fin$pc_1)) #pc1 is converted to a z-score using scale(), which subtracts the mean from the estimate then divides by its standard deviation. This follows convention from GeoDa
+
+# LISA is computed with localmoran_perm() for the scaled value for pc1, using the contiguity-based spatial weights matrix. 999 conditional permutation simulations are used to calculate statistical significance, and the argument alternative = "two.sided" will identify both statistically significant clusters and statistically significant spatial outliers
+dfw_lisa <- localmoran_perm( 
+ dat_fin$scaled_pc_1, 
+listw = col_listw, 
+  nsim = 999L, 
+  alternative = "two.sided"
+) %>%
+  as_tibble() %>%
+  set_names(c("local_i", "exp_i", "var_i", "z_i", "p_i",
+              "p_i_sim", "pi_sim_folded", "skewness", "kurtosis"))
+
+# attaching LISA data frame to the Census tract shapes after computing the lagged value for pc1. #spatial lag calculated using lag.listw(), it refers to the neighboring values of an observation given a spatial weights matrix
+
+dfw_lisa_df <- dat_fin %>%
+  select(geoid, scaled_pc_1) %>%
+  mutate(lagged_estimate = lag.listw(col_listw, scaled_pc_1)) %>% 
+  bind_cols(dfw_lisa)
+
+#recode the data into appropriate categories for the LISA quadrant plot, using a significance level of p = 0.05
+
+dfw_lisa_clusters <- dfw_lisa_df %>% 
+  mutate(lisa_cluster = case_when(
+    p_i >= 0.05 ~ "Not significant",
+    scaled_pc_1 > 0 & local_i > 0 ~ "High-high",
+    scaled_pc_1 > 0 & local_i < 0 ~ "High-low",
+    scaled_pc_1 < 0 & local_i > 0 ~ "Low-low",
+    scaled_pc_1 < 0 & local_i < 0 ~ "Low-high"
+  ))
+
+#The LISA quadrant plot
+
+color_values <- c(`High-high` = "red", 
+                  `High-low` = "pink", 
+                  `Low-low` = "blue", 
+                  `Low-high` = "lightblue", 
+                  `Not significant` = "white")
+
+ggplot(dfw_lisa_clusters, aes(x = scaled_pc_1, 
+                              y = lagged_estimate,
+                              fill = lisa_cluster)) + 
+  geom_point(color = "black", shape = 21, size = 2) + 
+  theme_minimal() + 
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") + 
+  scale_fill_manual(values = color_values) + 
+  labs(x = "PC 1 (z-score)",
+       y = "Spatial lag of PC 1 (z-score)",
+       fill = "Cluster type")
+
+ggsave("pc1_lisa_clusters.tiff",
+          width = 12, height=12, dpi=150)
+
+```
+
+# Interpretation- Observations falling in the top-right quadrant represent “high-high” clusters. Statistically significant clusters - those with a p-value less than or equal to 0.05 - are colored red on the chart. The bottom-left quadrant also represents spatial clusters, but instead includes lower-pc1 tracts that are also surrounded by tracts with similarly low pc1. The top-left and bottom-right quadrants are home to the spatial outliers, where values are dissimilar from their neighbors.
+
+
+# Cluster map using ggplot2 and geom_sf(). Here observations are visualized in relationship to their cluster membership and statistical significance
+```{r}
+
+ggplot(dfw_lisa_clusters, aes(fill = lisa_cluster)) + 
+  geom_sf(size = 0.1) + 
+  theme_void() + 
+  scale_fill_manual(values = color_values) + 
+  geom_text(aes(label = county_name), size = 3, nudge_y = 0.1)+
+  labs(fill = "Cluster type")
+
+ggsave("pc1_clusters_map.tiff",
+         width = 12, height=12, dpi=150)
+
+```
+
+##########################################################################################################################################################################################################################################################################################################################################################################################################################
+
+### Social vulnerability Index and Risk mapping of pesticide application and social vulnerability
+
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidycensus, leafsync,ggspatial, mapview, rmarkdown, knitr, stringr) #ggspatial will get spatial info
+# census_api_key("60cbacc5c89ceb76d50a175907d1a9af7a7f3a1b", install = TRUE)
+```
+
+#Code to check ACS Survey variables
+```{r}
+#load variables
+vars <- load_variables(2019, "acs5") #Loads all the variables
+
+vars <- load_variables(2019, "acs5/profile")
+
+#variables used for Social vulnerability
+#Minority race variables
+  #B02001_003 - Estimate!!Total:!!Black or African American alone
+  #B02001_004 - Estimate!!Total:!!American Indian and Alaska Native alone
+  #B02001_006 - Estimate!!Total:!!Native Hawaiian and Other Pacific Islanders
+  #B03002_012 - Estimate!!Total:!!Hispanic or Latino
+
+# No diploma/less than high school
+#B15003_016 - Estimate!!Total:!!12th grade, no diploma, EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+#B15003_013- Estimate!!Total:!!9th grade EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+#B15003_014- Estimate!!Total:!!10th grade EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+#B15003_015- Estimate!!Total:!!11th grade EDUCATIONAL ATTAINMENT FOR THE POPULATION 25 YEARS AND OVER
+
+# Below 200% Federal poverty level
+#C17002_002 Estimate!!Total:!!Under .50 RATIO OF INCOME TO POVERTY LEVEL IN THE PAST 12 months
+#C17002_003 Estimate!!Total:!!.50 to .99 RATIO OF INCOME TO POVERTY LEVEL IN THE PAST 12 MONTHS
+
+```
+
+#SVI Variables for 48 US States
+```{r}
+#get list of variables from 2015-2019 census
+acs_variable_list<- load_variables(2019, "acs5", cache = T)
+svi_us<- get_acs(geography = "county",
+                  state = c("al", "ar", "az", "ca", "co", "ct", "dc","de", "fl", "ga", "ia", "id",
+                  "il", "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms",
+                  "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or",
+                  "pa", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi", "wv", "wy", "ri"),
+                  year=2019,
+                  survey = "acs5",
+                 variables = c(Black_tot= "B02001_003", ameri_ind_tot= "B02001_004", native_hawai_tot= "B02001_006", hisp_latino_tot= "B03002_012", no_diploma= "B15003_016", bel_10th= "B15003_013",bel_11th= "B15003_014", bel_12th= "B15003_015", bel_pov1= "C17002_002", bel_pov2= "C17002_003"),
+                  geometry = TRUE,
+                  output = "wide") %>% clean_names()
+
+```
+
+```{r}
+# Separate county and state names
+svi_us <- svi_us %>%
+  separate(name, into = c("county", "state"), sep = ", ", remove = FALSE)
+
+# Create new variable "minority" by adding the specified variables
+#svi_us <- svi_us %>% 
+ # mutate(minority = black_tot_e + ameri_ind_tot_e + native_hawai_tot_e + hisp_latino_tot_e) %>%
+  
+# Convert 'geoid' column to numeric
+svi_us$geoid <- as.numeric(svi_us$geoid)
+
+# Checking for missing values
+missing <-svi_us %>% 
+  is.na() %>% 
+  colSums()
+print(missing) #no missing values
+
+##removing geometry variable (as_tibble) and saving it in csv and RDA format
+dat <- svi_us |>
+  as_tibble()|>
+  select(c(1,3:24)) |>
+  rename(geoid10= "geoid")
+
+# save svi data as csv file
+write.csv(dat,"svi_us_acs_extract.csv")
+
+# save same file in rda format as backup
+save(dat, file = "svi_us_acs.RDA")
+```
+
+#PCA Analysis of SVI_US
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidymodels, factoextra, ggfortify, gridExtra, knitr)
+
+dat<- read_csv("svi_us_acs_extract.csv")
+
+svi_pca <- dat[c(5:24)] 
+
+# 
+ final <- svi_pca[c(1, 3, 5, 7, 9, 11, 13, 15, 17,19)] #variables for svi_pca analysis
+ 
+# Calculate principal components
+#scale: a logical value indicating whether the variables should be scaled to have unit variance before the analysis takes place
+pca.ln <- prcomp(final, scale = TRUE)
+save(pca.ln, file = "svi_pca_ln.rda")
+```
+
+```{r}
+#load model object
+load("svi_pca_ln.rda")
+```
+
+```{r}
+eigenvalues_ln <- matrix(pca.ln$sdev^2) #eigenvalues
+perc_variance <- round(100*matrix(pca.ln$sdev^2/sum(pca.ln$sdev^2)),1) #variance
+
+#Summary table 
+eigenvalues_ln <- cbind(1:10, eigenvalues_ln, perc_variance) 
+colum_ln <- c("Principal Component", "Eigenvalues", "Percent Variance")
+eigenvalues_ln <- kable(eigenvalues_ln, col.names = colum_ln)
+eigenvalues_ln 
+```
+
+## Proportion of Variance Plots
+The first component explained 81% of the variance 
+```{r PVE plots}
+#Plots the proportion of variance explained by each component (scree plot)
+pve.ln <- pca.ln$sdev^2/sum(pca.ln$sdev^2) #proportion of variance explain by each component
+ 
+#log-transformed data
+fviz_eig(pca.ln, main = "Scaled SVI data",
+         xlab = "Principal component",
+         ylim = c(0,50))
+
+ggsave("svi_pca_screeplot.tiff",
+       width=6, height= 6, dpi=300)
+```
+
+```{r}
+#Extract the first  component with maximum variance
+svi_pc1 <- pca.ln$x[, 1]
+
+# Convert to data frame
+svi_pc1_df <- data.frame(svi_pc1)
+
+# Save the svi_pc1 as a CSV file
+write_csv(svi_pc1_df, "svi_pc1.csv")
+```
+
+#combining svi_pc1 with svi data file
+```{r}
+dat<- read_csv("svi_us_acs_extract.csv") #original svi data
+svi_pc1_df <- read_csv("svi_pc1.csv") #SVI PC1
+
+#combining svi_pc1 with svi data file
+dat1 <- dat[c(2:22)] # excluding "...1" variable
+
+## final file for svi_pc1 mapping
+dat_map<- cbind(dat1, svi_pc1_df)
+write_csv(dat_map, "svi_pc1_mapping.csv")
+
+```
+
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tmap, sp, sf, tigris, spdep)
+```
+
+#pesticide and pesticide PCA data
+```{r}
+#join statefp code with dat_fin
+state_fips<- read_csv("state_fips.csv")
+
+dat3<- read_csv("mapping_dat_final.csv") |> #pesticide and PCA data adding state fips code
+  left_join(state_fips, by="state") |>
+  rename(statefp="state_fips_code", countyfp="county_fips_code")
+```
+
+#CONUS shapefile to join pesticide/pca data
+```{r}
+state_list<- list("al", "ar", "az", "ca", "co", "ct", "dc", "de", "fl", "ga", "ia", "id",
+                  "il", "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms",
+                  "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or",
+                  "pa", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi", "wv", "wy", "ri")
+
+us_counties <- counties(state = state_list, cb = FALSE, resolution = "500k", year = "2019", class="sf") |>
+  clean_names()
+
+us_counties$countyfp <- as.numeric(us_counties$countyfp)
+us_counties$statefp <- as.numeric(us_counties$statefp)
+us_counties$geoid <-   as.numeric(us_counties$geoid)
+```
+
+```{r}
+dat_fin_pest<- left_join(us_counties, dat3, by=c("statefp","countyfp")) |>
+  rename(geoid10= "geoid")
+```
+
+#Adding statefp code to SVI data
+```{r}
+svi_fin <- read_csv("svi_pc1_mapping.csv") |>
+    left_join(state_fips, by="state") |>
+  rename(statefp="state_fips_code")
+```
+
+#joining Pesticide PCA data with SVI PCA data
+##### Use this dataset for bivariate mapping of pesticide PC1 and Social vulnerability PC1
+###########################################################################################################################
+```{r}
+
+final_svi_pest <- left_join(dat_fin_pest, svi_fin, by = c("geoid10"))
+
+
+final_svi_pest_plt<- final_svi_pest |>
+  select(c("statefp.x" , "state.y", "countyfp", "countyns", "geoid10", "name",
+           "pc_1" , "svi_pc1",  "statefp.y", "geometry"))|>
+  mutate(pc_1 = if_else(is.na(pc_1), min(pc_1, na.rm = TRUE), pc_1))|>
+  mutate(svi_pc1 = if_else(is.na(svi_pc1), min(svi_pc1, na.rm = TRUE), svi_pc1))
+
+save(final_svi_pest_plt, file="final_svi_pest_bivarate_data.rda")
+```
+
+
+#SVI- PC1 Mapping
+```{r}
+library(viridis)
+library(viridisLite)
+
+svi_index <- "svi_pc1"
+
+# Use a color-blind safe palette from viridis
+#color_palette <- viridis_pal()(5)
+
+w <- tm_shape(final_svi_pest_plt) +
+  tm_polygons(col = svi_index,
+             breaks = quantile(final_svi_pest_plt[[svi_index]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+            palette = viridis::viridis(4, alpha = 1, direction = 1, option = "D"),
+              title = "Mapping of SVI Index using ACS 2015-2019 Estimates") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_layout(legend.title.size = 1.2,
+            legend.text.size = 1) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "US_SVI.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+#Bivariate mapping in ggplot using biscale package
+# https://chris-prener.github.io/biscale/articles/biscale.html
+```{r}
+library(biscale)
+library(cowplot)
+library(sf)
+```
+
+#step 1 preparing data- create bi_class variable 
+```{r}
+data_test <- bi_class(final_svi_pest_plt, x = pc_1, y = svi_pc1, style = "quantile", dim = 4)
+```
+
+#bivariate summary for discussion purposes
+```{r}
+summary_bi_variate <- data_test |>
+  filter(bi_class == "4-4") |>
+    as_tibble() |>
+  select(c(2,5,6))
+
+table_data <- summary_bi_variate %>%
+  group_by(state.y) %>%
+  summarise(names = paste(name, collapse = ", "),
+            count_names = n()) %>%
+  ungroup()
+
+write_csv(table_data, "high_bivariate_val.csv")
+```
+
+#step 2- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_test, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 4) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 4,
+                    xlab = "Pesticide index ",
+                    ylab = "Social vulnerability index",
+                    size = 5)+
+  theme(text = element_text(size = 6))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("US_bivariate_map.tiff",
+       width = 12, height = 12, dpi = 300)
+```
+
+#######################################################################################################################################################################################################################################################################################################################################################################################################################
+### Pesticide heat maps and shiny app
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor,rsconnect)
+```
+
+```{r}
+load("~/Desktop/Jabbeen/jt_dissert/jt_dissert/pest_conus_v2.RDA")
+dat_conus$year<- as.numeric(as.character(dat_conus$year))
+
+```
+
+#aggregate by year and state
+```{r}
+state_data <- dat_conus  %>%
+  group_by(state_fips_code, state_name, year, compound) %>%
+  summarize(total_pest_applied = as.numeric(median(pest_applied)))
+rm(dat_conus)
+```
+
+#data scaling
+
+```{r}
+scaled_data <- state_data %>%
+  group_by(compound) %>%
+  mutate(scaled_pest_applied = if_else(is.na(total_pest_applied), NA_real_, (total_pest_applied - min(total_pest_applied, na.rm = TRUE)) / (max(total_pest_applied, na.rm = TRUE) - min(total_pest_applied, na.rm = TRUE)) * 2 - 1))
+```
+
+#filter chemicals
+```{r}
+compound_classes <- list(
+  Herbicide_1 = c("2,4-D", "ATRAZINE", "ACETOCHLOR", "CLETHODIM", "DICAMBA", "GLYPHOSATE", "IMAZETHAPYR"),
+  Herbicide_2=c("PARAQUAT", "PENDIMETHALIN", "CHLORIMURON", "METOLACHLOR", "METRIBUZIN", "METSULFURON", "NICOSULFURON"),
+  Herbicide_3=c("PICLORAM", "SETHOXYDIM", "SIMAZINE", "THIFENSULFURON", "TRIBENURON METHYL", 
+                "TRICLOPYR", "TRIFLURALIN"),
+  Insecticide = c("CARBARYL", "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA", "DIMETHOATE", "ESFENVALERATE", "PERMETHRIN"),
+  Fungicide = c("CHLOROTHALONIL", "MANCOZEB", "PROPICONAZOLE")
+)
+
+filtered_data <- map_df(compound_classes$Fungicide, ~ scaled_data %>% 
+                          filter(compound %in% .x))
+```
+
+#heatmap
+```{r}
+ggplot(filtered_data, aes(state_name, year, fill = scaled_pest_applied)) +
+  geom_tile(color = "white", size = 0.1) +
+  scale_fill_viridis(name = "") +
+  facet_grid(compound ~ ., switch = "y") +
+  theme_bw(base_size = 8) +
+  # guides(fill = "none") +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+    axis.text.y = element_text(angle = 90, vjust = 0.5, hjust = 1, size = 8),
+    axis.title.x = element_blank(),
+    axis.title.y = element_blank(),
+    strip.background = element_rect(fill = "white"),
+    strip.text.y = element_text(angle = 0, hjust = 0, vjust = 0.5),
+    legend.text = element_text(angle = 90, hjust = 0, vjust = 0.5),
+    legend.key.width = unit(0.1, "cm")
+  )
+
+ggsave("chemical_htmp_fungicide.tiff", 
+       width = 9,height = 12,
+       dpi=300)
+```
+
+####################################################################################################################################
+####################################################################################################################################
+#shiny app
+
+```{r}
+library(shiny)
+library(ggplot2)
+library(viridis)
+
+# Define the UI
+ui <- fluidPage(
+  titlePanel("Temporal trends - Pesticides applied - CONUS - units scaled"),
+  
+  fluidRow(
+    column(width = 12,
+           plotOutput("compound_plot", height = "750px"),
+           align = "center"
+    )
+  ),
+  
+  fluidRow(
+    column(width = 12,
+           textInput("compound_search", "Search Compound:", ""),
+           align = "center"
+    )
+  ),
+  
+  fluidRow(
+    column(width = 12,
+           sliderInput("compound_input", "Select Compound:",
+                       min = 1, max = length(unique(scaled_data$compound)),
+                       value = 1, step = 1),
+           align = "center"
+    )
+  )
+)
+
+# Define the server
+server <- function(input, output) {
+  filtered_data <- reactive({
+    search_term <- input$compound_search
+    if (search_term != "") {
+      scaled_data %>%
+        filter(grepl(search_term, compound, ignore.case = TRUE))
+    } else {
+      scaled_data
+    }
+  })
+  
+  output$compound_plot <- renderPlot({
+    selected_compound <- unique(filtered_data()$compound)[input$compound_input]
+    filtered_compound <- filtered_data() %>%
+      filter(compound == selected_compound)
+    
+    ggplot(filtered_compound, aes(year, state_name, fill = scaled_pest_applied)) +
+      geom_tile(color = "white", size = 0.1) +
+      scale_fill_viridis(name = "") +
+      facet_grid(compound ~ .) +
+      scale_x_continuous(breaks = filtered_compound$year, expand = c(0, 0)) +
+      theme_bw(base_size = 8) +
+      labs(title = paste("Compound:", selected_compound))
+  })
+}
+
+# Run the Shiny app
+shinyApp(ui = ui, server = server)
+
+
+# Save the Shiny app as an HTML file
+#shinyAppDir(
+ # appDir = ".",  # Set the directory where you want to save the app
+ # appFile = "my_shiny_app",  # Set the name of the app file (without the extension)
+ # launch.browser = FALSE  # Prevent the app from automatically opening in a web browser)
+```
+
+

@@ -1,0 +1,132 @@
+---
+title: "03.1_ne_chemicals_cancer"
+author: "Taiba"
+date: "2023-06-13"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, stringr, zipcodeR, lubridate, tmap, sf, tigris)
+```
+
+# Joined using part 1 chemical data (90-100% selection criteria)
+```{r}
+dat<- read_csv("ped_cancer_v4.csv")  |>
+rename(geoid10="GEOID")
+dat$geoid10<- as.character(dat$geoid10)
+
+ne_counties <- counties(state = "ne", cb = FALSE, resolution = "500k", year = "2010", class="sf") |>
+  clean_names()
+
+#join ped cancer data with ne county shapefile
+dat_map<- left_join(ne_counties, dat, by="geoid10")
+
+# write_csv(dat_map, "ped_cancer_v5.csv")
+
+
+```
+
+
+```{r}
+dat_chem <- read_csv("ne_final_chem_widev5.csv") |>
+  rename(countyfp= "county_fips_code") |>
+  mutate(countyfp = str_pad(as.character(countyfp), width = 3, pad = "0")) 
+
+dat_can <- read_csv("ped_cancer_v5.csv") |>
+  drop_na(county)|>
+  select(- c("statefp10", "STATEFP","countyfp10", "name10","countyns10",  
+             "lsad10", "classfp10",
+             "mtfcc10", "csafp10", "cbsafp10", "metdivfp10", "funcstat10", 
+             "aland10", "awater10", "intptlat10", "intptlon10",
+             "geometry.x","geometry.y","namelsad10"))
+
+ #
+write_csv(dat_can, "ped_cancer_v6.csv")
+
+# Join datasets by matching county variables
+can_chem <-  full_join(dat_chem, dat_can, by = "countyfp")
+
+#
+write_csv(can_chem, "ped_can_chem_v7.csv")
+
+
+```
+
+#sdoh data with chemicals and cancer data for final analysis 07/14/23
+```{r}
+
+dat_svi <- load("ped_sdohProcessed.RDA") 
+
+sdoh <- dat |>
+  rename(geoid10= "geoid") |>
+  select(-c(3:20))
+
+ped_can <- read_csv("ped_can_chem_v7.csv") |>
+  mutate(geoid10 = paste0("31", countyfp))
+
+# joining pediatric cancer-pesticide data with sdoh data
+can_chem_sdoh <-  full_join(ped_can, sdoh, by= "geoid10")
+
+# 
+write_csv(can_chem_sdoh, "ped_can_chem_sdoh_v8.csv")
+```
+
+###################################################################################
+##################################################################################
+####################################################################################
+
+#06/17/23
+# Joined using part 2 chemical data (80-80% selection criteria, 49 chemicals)
+```{r}
+dat<- read_csv("ped_cancer_v4.csv")  |>
+rename(geoid10="GEOID")
+dat$geoid10<- as.character(dat$geoid10)
+
+ne_counties <- counties(state = "ne", cb = FALSE, resolution = "500k", year = "2010", class="sf") |>
+  clean_names()
+
+#join ped cancer data with ne county shapefile
+dat_map<- left_join(ne_counties, dat, by="geoid10")
+
+#write_csv(dat_map, "ped_cancer_v5.csv")
+
+
+```
+
+
+```{r}
+dat_chem <- read_csv("ne_final_chem_wide_part2.csv") |>
+  rename(countyfp= "county_fips_code") |>
+  mutate(countyfp = str_pad(as.character(countyfp), width = 3, pad = "0")) 
+
+dat_can <- read_csv("ped_cancer_v5.csv") |>
+  drop_na(county)|>
+  select(- c("statefp10", "STATEFP","countyfp10", "geoid10", "name10","countyns10",  
+             "lsad10", "classfp10",
+             "mtfcc10", "csafp10", "cbsafp10", "metdivfp10", "funcstat10", 
+             "aland10", "awater10", "intptlat10", "intptlon10",
+             "geometry.x","geometry.y","namelsad10"))
+#write_csv(dat_can, "ped_cancer_v6.csv")
+
+# Join datasets by matching county variables
+can_chem <- dat_chem |>
+ left_join(dat_can, by = "countyfp")
+
+write_csv(can_chem, "ped_can_chem_part2.csv") #cancer and chemical data using part 2 (49 chemicals) chemical data
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+

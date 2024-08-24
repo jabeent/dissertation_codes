@@ -1,0 +1,652 @@
+---
+title: "10_bivariate_maps"
+author: "Taiba"
+date: "2024-03-24"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidycensus, leafsync,ggspatial, mapview, rmarkdown, knitr, stringr, biscale, cowplot, sf, tigris, spdep, tmap)
+```
+
+```{r}
+ne_counties <- counties(state = "NE", cb = FALSE, resolution = "500k", year = "2019", class="sf") |>
+  clean_names()
+```
+
+
+```{r}
+index <- read_csv("ne_mapping_dat_final.csv") |> 
+  clean_names() |> 
+  select(county_fips_code, pca_ln_x_1) |>
+  mutate(geoid10 = as.character(county_fips_code),
+         geoid10 = str_pad(geoid10, width = 3, side = "left", pad = "0"),
+         pca_ln_x_1= pca_ln_x_1*(-1))
+
+out <- read_csv("final_dissrt_analy_data.csv") |>
+  clean_names() |>
+  select(-c(2:33, 35:43, 49:54, 57:72)) |>
+  mutate(geoid10 = str_remove(geoid10, "^31"), 
+         geoid10 = str_pad(geoid10, width = 3, side = "left", pad = "0"))
+```
+
+#join cancer rates with nebraska shapefile
+```{r}
+#calculated Annual rate of pediatric cancer incidence per 100000 children
+dat_viz<- full_join(index, out, by = "geoid10") |>
+  mutate(across(c(cns_and_miscellaneous_intracranial_and_intraspinal:total_can),
+                ~ ((./22) / ped_popln) * 100000)) |>
+  rename(countyfp = geoid10)
+
+dat_viz_shp<- left_join(ne_counties, dat_viz, by= "countyfp")
+```
+
+
+#============================================================================#
+#CNS - bivariate summary
+```{r}
+data_cns <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = cns_and_miscellaneous_intracranial_and_intraspinal, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_cns |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,27)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#CNS- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_cns, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "CNS cancer rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_cns_pest_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+#============================================================================#
+#============================================================================#
+
+#============================================================================#
+#leukemia - bivariate summary
+```{r}
+data_leukemia <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = leukemia, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_leukemia |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,27)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#leukemia- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_leukemia, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Leukemia rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_leukemia_pest_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+#============================================================================#
+#============================================================================#
+
+#============================================================================#
+#lymphoma - bivariate summary
+```{r}
+data_lymphoma <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = lymphomas_and_reticuloendothelial_neoplasms, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_lymphoma |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,27)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#Lymphoma- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_lymphoma, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Lymphoma rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_lymphoma_pest_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+
+#============================================================================#
+#============================================================================#
+#============================================================================#
+#overall cancer - bivariate summary
+```{r}
+data_overall <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = total_can, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_overall |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,27)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#overall- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_overall, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Overall cancer rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_overall_cancer_pest_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+############################################################################################
+#============================================================================#
+#Malignant bone - bivariate summary
+```{r}
+data_malig_bone <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = malignant_bone_tumors, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_malig_bone |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,27)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#Malignant bone- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_malig_bone, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Malignant bone tumors",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_malig_bone_pest_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+#######################################################################################################
+
+# Birth defects bivariate maps
+```{r}
+index <- read_csv("ne_mapping_dat_final.csv") |> 
+  clean_names() |> 
+  select(county_fips_code, pca_ln_x_1) |>
+  mutate(geoid10 = as.character(county_fips_code),
+         geoid10 = str_pad(geoid10, width = 3, side = "left", pad = "0"),
+         pca_ln_x_1= pca_ln_x_1*(-1))
+
+out <- read_csv("final_dissrt_analy_data.csv") |>
+  clean_names() |>
+  select(-c(2:33, 35:43, 44:56)) |>
+  mutate(geoid10 = str_remove(geoid10, "^31"), 
+         geoid10 = str_pad(geoid10, width = 3, side = "left", pad = "0"))
+```
+
+#join birth defects rates with nebraska shapefile
+```{r}
+#calculated Annual rate of birth defects per 100000 children
+dat_viz<- full_join(index, out, by = "geoid10") |>
+  mutate(across(c(abdominal:total_bd),
+                ~ ((./22) / live_birth) * 100000)) |>
+  rename(countyfp = geoid10)
+
+dat_viz_shp<- left_join(ne_counties, dat_viz, by= "countyfp")
+```
+
+
+#============================================================================#
+#Total birthdefects - bivariate summary
+```{r}
+data_totaldef <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = total_bd, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_totaldef |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,38)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#total birth defects- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_totaldef, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Overall Birthdefects rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+
+
+```{r}
+ggsave("ne_total_bd_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+#============================================================================#
+#============================================================================#
+
+#============================================================================#
+#Cardiac defects - bivariate summary
+```{r}
+data_cardiac <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = cardiac, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_cardiac |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,38)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#Cardiac defects- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_cardiac, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Cardiac defects rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_cardiac_bd_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+#============================================================================#
+#Hepatic defects - bivariate summary
+```{r}
+data_hepatic <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = hepatic, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_hepatic |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,38)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#hepatic defects- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_hepatic, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Hepatic defects rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_hepatic_bd_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+
+#============================================================================#
+#renal defects - bivariate summary
+```{r}
+data_renal <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = renal_genuri, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_renal |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,38)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+#renal defects- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_renal, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Renal defects rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_renal_bd_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```
+
+
+#============================================================================#
+#cranial birthdefects - bivariate summary
+```{r}
+data_cranial <- bi_class(dat_viz_shp, x = pca_ln_x_1, 
+                      y = cranial, 
+                      style = "quantile", 
+                      dim = 3)
+
+summary_bi_variate <- data_cranial |>
+  filter(bi_class == "3-3" | bi_class == "3-2") |>
+    as_tibble() |>
+  select(c(5,38)) |>
+  group_by(bi_class) %>%
+  summarise(names = paste(name, collapse = ", "))
+```
+
+
+#Cranial birth defects- Bivariate Mapping with Biscale
+```{r}
+# create map
+map <- ggplot() +
+  geom_sf(data = data_cranial, mapping = aes(fill = bi_class), 
+          color = "white", 
+          size = 0.1, 
+          show.legend = FALSE) +
+  bi_scale_fill(pal = "GrPink2", dim = 3) +
+  labs(
+    title = "",
+    subtitle = ""
+  ) +
+  bi_theme()
+```
+
+# creating legends
+```{r}
+legend <- bi_legend(pal = "GrPink2",
+                    dim = 3,
+                    xlab = "Pesticide index ",
+                    ylab = "Cranial defects rate",
+                    size = 0.2)+
+  theme(text = element_text(size = 10))
+```
+
+# creating final output 
+```{r}
+# combine map with legend
+ggdraw() +
+  draw_plot(map, 0, 0, 1, 1) +
+  draw_plot(legend, 0.05, -0.09, 0.2, 0.7)
+  #draw_plot(legend, 0.7, .2, 0.2, 0.09)
+```
+
+```{r}
+ggsave("ne_cranial_bd_bivariate.tiff",
+       width = 12, height = 10, dpi = 300)
+```

@@ -1,0 +1,104 @@
+---
+title: "Unadjusted_WQS"
+author: "Taiba"
+date: "2024-01-08"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, dplyr, janitor,gWQS)
+```
+
+# using data without sdoh counts
+```{r}
+dat<- read_csv("final_dissrt_analy_data.csv")
+```
+
+```{r}
+chem_mix<- names(dat)[2:33]
+```
+
+#Unadjusted without covariates for pediatric cancer
+```{r}
+gwqs_loop <- function(input_df, output_folder, outcomes, covariates=NULL, 
+                      chem_mix) {
+  # Loop through the list of outcomes
+  for (outcome in outcomes) {
+    # Construct the formula with specified covariates
+    formula <- paste(outcome, "~ wqs ", covariates)
+    
+    # Create the file names based on the outcome and model type
+    filename_prefix <- "model_output"
+    file_name_wqs <- paste0("nrh", "_", outcome, ".rda")
+    file_name_wqs_rh <- paste0("rh", "_", outcome, ".rda")
+    
+    # Perform the first model (gWQS)
+    wqs_res <- tryCatch(
+      gwqs(as.formula(formula), mix_name = chem_mix, offset = dat$ped_popln,
+           zero_infl = FALSE, data = input_df, q = 10, validation = 0.6, b = 10,
+           b1_pos = TRUE, b1_constr = FALSE, family = "negbin", seed = 2023),
+      error = function(e) {
+        cat(paste("Error occurred for outcome:", outcome, "\n", "Error message:", e$message, "\n"))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(wqs_res)) {
+      next  # Move to the next outcome variable
+    } else {
+      # Save the first model output to RDA file
+      save(wqs_res, file = file.path(output_folder, file_name_wqs))
+    }
+    
+    # Perform the second model (gWQSRH)
+    wqs_res_rh <- tryCatch(
+      gwqsrh(as.formula(formula), mix_name = chem_mix, offset = dat$ped_popln,
+             zero_infl = FALSE, data = input_df, q = 10, validation = 0.6, b = 100,
+             b1_pos = TRUE, b1_constr = FALSE, family = "negbin", seed = 2023, rh = 5),
+      error = function(e) {
+        cat(paste("Error occurred for outcome:", outcome, "\n", "Error message:", e$message, "\n"))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(wqs_res_rh)) {
+      next  # Move to the next outcome variable
+    } else {
+      # Save the second model output to RDA file
+      save(wqs_res_rh, file = file.path(output_folder, file_name_wqs_rh))
+    }
+  }
+}
+
+
+```
+
+#run function
+```{r, warning=FALSE}
+
+gwqs_loop(input_df = dat,
+          output_folder = "~/Dissertation/unadjust", 
+          outcomes = names(dat)[44:55],  #update location of outcomes
+          #covariates = "+ m_blk_pct + f_blk_pct + m_hisp_pct + f_hisp_pct + m_heal_ins_pct + f_heal_ins_pct +vehicle_pct + sing_pent_pct + ssi_snap_pct ",
+          chem_mix = names(dat)[2:33])
+```
+
+```{r}
+load("~/Dissertation/unadjust/nrh_total_can.rda") 
+
+summary(wqs_res)
+gwqs_barplot(wqs_res)
+
+```
+
+
+```{r}
+load("~/Dissertation/unadjust/rh_total_can.rda") 
+
+summary(wqs_res_rh)
+gwqsrh_boxplot(wqs_res_rh)
+gwqs_weights_tab(wqs_res_rh)
+
+```
+

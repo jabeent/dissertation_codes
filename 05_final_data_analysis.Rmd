@@ -1,0 +1,584 @@
+---
+title: "05_final_data_analysis"
+author: "Taiba"
+date: "2023-07-23"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, dplyr, janitor,gWQS)
+```
+
+#sdoh data
+```{r}
+#join variables: geoid10 and county name
+load("ped_sdohProcessed.RDA") |> as_tibble()
+
+sdoh <- dat |>
+  as_tibble() |>
+  rename(geoid10= "geoid") |>
+  select(-c(3:20)) |>
+  mutate_at(vars(3:11), ~ round(., 2)) |>
+  mutate(name = str_split_fixed(name, ", ", 2)[, 1])|>
+  rename(county= "name")
+
+rm(dat)
+```
+
+#pediatric population
+```{r}
+ped_pln<- read_csv("ped_popln_exp.csv") 
+```
+
+#pediatric cancer data
+```{r}
+ped_can_count<- read_csv("ped_cancer_v3.csv") |>
+  select(c(1:13))
+```
+
+#birth defects dadta
+```{r}
+#join variable: county name
+bd_count<- read_csv("bd_cnty_v7.csv") 
+```
+
+#join sdoh with outcomes
+```{r}
+sdoh_outcms <- sdoh |>
+  full_join(ped_can_count, by = "county") |>
+  full_join(ped_pln, by = "county") |>
+  full_join(bd_count, by = "county") |>
+  clean_names()
+
+```
+
+#chemical data
+```{r}
+ne_chem<- read_csv("ne_final_chem_widev5.csv") |>
+  rename(geoid10= "county_fips_code") |>
+  mutate(geoid10 = str_pad(as.character(geoid10), width = 3, pad = "0"),
+         geoid10 = paste0("31", geoid10))
+
+```
+
+
+# join chemicals, sdoh (percentage variables) and outcomes into a file
+```{r}
+fin_dat<- full_join(ne_chem, sdoh_outcms, by= "geoid10") |>
+  select(-c("geoid")) |>
+  mutate_at(vars(44:72), ~ replace_na(., 0))
+
+write_csv(fin_dat, "final_dissrt_analy_data.csv")
+```
+
+# join sdoh count data to the final_dissrt_analy_data for stratified analysis purpose
+
+```{r}
+dat1 <- read_csv("final_dissrt_analy_data.csv")
+dat2 <- read_csv("ped_sdohcount.csv")
+ 
+# 
+dat2 <- dat2 |>
+  select(-contains("...1"))
+
+#
+fin_dat1 <- full_join(dat1, dat2, by= "geoid10") |>
+  mutate_at(vars(73:82), ~ replace_na(., 0))
+
+write_csv(fin_dat1, "final_dissrt_analy_sdh_count_datav1.csv")
+
+ # Save same file as RDA 
+save(fin_dat1, file = "final_dissrt_analy_sdh_count_datav1.RDA")
+```
+
+#############################################################################
+```{r}
+pacman::p_load(tidyverse, janitor, gWQS)
+```
+
+# using data without sdoh counts
+```{r}
+dat<- read_csv("final_dissrt_analy_data.csv")
+```
+
+#model
+```{r, warning=FALSE}
+chem_mix<- names(dat)[2:33]
+
+wqs_res<- gwqs(ophthal ~ wqs+ m_blk_pct + f_blk_pct + m_hisp_pct + f_hisp_pct + m_heal_ins_pct + 
+                 f_heal_ins_pct +vehicle_pct + sing_pent_pct + ssi_snap_pct, 
+               mix_name = chem_mix, 
+               offset= dat$live_birth,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = TRUE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+#gwqs_summary_tab(wqs_res)
+save(wqs_res, file="~/Dissertation/test/birth_def/nrh_ophthal_bd.RDA")
+```
+
+
+```{r}
+gwqs_scatterplot(wqs_res)
+gwqs_summary_tab(wqs_res)
+
+gwqs_barplot(wqs_res)
+gwqs_weights_tab(wqs_res)
+```
+
+#repeated holdout # try to use rs- subset term
+```{r, warning=FALSE}
+wqs_res_rh <- gwqsrh(cardiac ~ wqs+
+                       #Below are list of covariates included
+                       m_blk_pct + f_blk_pct + m_hisp_pct + f_hisp_pct + m_heal_ins_pct +
+                       f_heal_ins_pct +vehicle_pct + sing_pent_pct + ssi_snap_pct, 
+                     ###################
+                     mix_name = chem_mix, #list of pesticides as mixture
+                     ###################
+                     offset=dat$live_birth, #offset variable to yield rat
+                     ###################
+                     zero_infl = FALSE, #only for sub-types
+                     ###################
+                     data = dat, #input dataset
+                     ###################
+                     q=10, #Converting pesticides to quantile scale
+                     ###################
+                     validation= 0.6, #split 60% data for validation
+                     ###################
+                     b = 10, #considering 100 bootstrap samples
+                     ###################
+                     b1_pos = TRUE, #assuming beta as positive
+                     ###################
+                     b1_constr = FALSE, #Unconstrained beta direction
+                     ###################
+                     family= "negbin", # assuming outcome following negative binomial distribution
+                     ###################
+                     seed = 2023, #seed to reproduce the same test and training data
+                     ###################
+                     rh=5 #repeated holdouts
+                     ###################
+                     )
+```
+
+```{r}
+gwqs_summary_tab(wqs_res_rh)
+gwqsrh_boxplot(wqs_res_rh, tau = 0)
+gwqs_weights_tab(wqs_res_rh)
+
+#ggsave("gwqsrh_abdominal_bd.tiff", 
+       #width = 6,height = 9,
+       #dpi=300)
+```
+
+
+```{r}
+gwqs_loop <- function(input_df, output_folder, outcomes, covariates=NULL, 
+                      chem_mix) {
+  # Loop through the list of outcomes
+  for (outcome in outcomes) {
+    # Construct the formula with specified covariates
+    formula <- paste(outcome, "~ wqs ", covariates)
+    
+    # Create the file names based on the outcome and model type
+    filename_prefix <- "model_output"
+    file_name_wqs <- paste0("nrh", "_", outcome, ".rda")
+    file_name_wqs_rh <- paste0("rh", "_", outcome, ".rda")
+    
+    # Perform the first model (gWQS)
+    wqs_res <- tryCatch(
+      gwqs(as.formula(formula), mix_name = chem_mix, offset = dat$ped_popln,
+           zero_infl = FALSE, data = input_df, q = 10, validation = 0.6, b = 10,
+           b1_pos = TRUE, b1_constr = FALSE, family = "negbin", seed = 2023),
+      error = function(e) {
+        cat(paste("Error occurred for outcome:", outcome, "\n", "Error message:", e$message, "\n"))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(wqs_res)) {
+      next  # Move to the next outcome variable
+    } else {
+      # Save the first model output to RDA file
+      save(wqs_res, file = file.path(output_folder, file_name_wqs))
+    }
+    
+    # Perform the second model (gWQSRH)
+    wqs_res_rh <- tryCatch(
+      gwqsrh(as.formula(formula), mix_name = chem_mix, offset = dat$ped_popln,
+             zero_infl = FALSE, data = input_df, q = 10, validation = 0.6, b = 100,
+             b1_pos = TRUE, b1_constr = FALSE, family = "negbin", seed = 2023, rh = 5),
+      error = function(e) {
+        cat(paste("Error occurred for outcome:", outcome, "\n", "Error message:", e$message, "\n"))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(wqs_res_rh)) {
+      next  # Move to the next outcome variable
+    } else {
+      # Save the second model output to RDA file
+      save(wqs_res_rh, file = file.path(output_folder, file_name_wqs_rh))
+    }
+  }
+}
+
+
+```
+
+#run function
+```{r, warning=FALSE}
+
+gwqs_loop(input_df = dat,
+          output_folder = "~/Dissertation/test", 
+          outcomes = names(dat)[44:55],  #update location of outcomes
+          covariates = "+ m_blk_pct + f_blk_pct + m_hisp_pct + f_hisp_pct + m_heal_ins_pct + f_heal_ins_pct +vehicle_pct + sing_pent_pct + ssi_snap_pct ",
+          chem_mix = names(dat)[2:33])
+```
+
+```{r}
+load("~/Dissertation/test/nrh_total_can.rda") 
+
+summary(wqs_res)
+gwqs_barplot(wqs_res)
+
+```
+
+
+```{r}
+load("~/Dissertation/test/rh_leukemia.rda") 
+
+summary(wqs_res_rh)
+gwqsrh_boxplot(wqs_res_rh)
+gwqs_weights_tab(wqs_res_rh)
+
+#
+ggsave("gwqsrh_leukemia.tiff", 
+       width = 6,height = 9,
+       dpi=300)
+```
+
+
+```{r}
+load("~/Dissertation/test/birth_def/nrh_overall_bd.rda") 
+load("~/Dissertation/test/birth_def/nrh_cardiac.rda") 
+load("~/Dissertation/test/birth_def/nrh_cranial_bd.rda")
+load("~/Dissertation/test/birth_def/nrh_hepatic_bd.rda") 
+load("~/Dissertation/test/birth_def/nrh_musc_ske.rda")
+load("~/Dissertation/test/birth_def/nrh_ophthal_bd.rda")
+load("~/Dissertation/test/birth_def/nrh_renal_genuri.rda")
+
+
+total_bd<- wqs_res$final_weights |>
+  mutate(outcome = "total_bd")
+rm(wqs_res)
+
+cardiac<- wqs_res$final_weights |>
+  mutate(outcome = "cardiac")
+rm(wqs_res)
+
+cranial<- wqs_res$final_weights |>
+  mutate(outcome = "cranial")
+rm(wqs_res)
+
+hepatic<- wqs_res$final_weights |>
+  mutate(outcome = "hepatic")
+rm(wqs_res)
+
+musc_ske<- wqs_res$final_weights |>
+  mutate(outcome = "musc_ske")
+rm(wqs_res)
+
+ophthal<- wqs_res$final_weights |>
+  mutate(outcome = "ophthal")
+rm(wqs_res)
+  
+renal_genuri<- wqs_res$final_weights |>
+  mutate(outcome = "renal_genuri")
+rm(wqs_res)
+
+# Get a list of all dataframes in the global environment
+dfs <- mget(ls())
+
+# Combine all dataframes into a single dataframe
+combined_df <- bind_rows(dfs)|>
+  clean_names()|>
+  mutate(mix_name = str_to_title(mix_name),
+         mean_weight = sprintf("%.2f", mean_weight)) |>
+  #select(-c(2:4)) |>
+  pivot_wider(names_from = outcome, values_from = mean_weight) |>
+  select(mix_name, total_bd, cranial, cardiac, renal_genuri, musc_ske, hepatic,ophthal)
+
+write_csv(combined_df, "~/Dissertation/test/birth_def/bd_weights.csv")
+```
+
+
+
+
+```{r}
+load("~/Dissertation/test/unadj/nrh_benign_neop_mass.rda") 
+
+summary(wqs_res)
+
+```
+
+# Figures for aim2 ped cancer- WQS estimates 01/07/24
+```{r}
+dat <- read_csv("ped_can_wqs.csv") |>
+  clean_names() |>
+  mutate(cancer_type = factor(cancer_type, levels = c("Total cancer", "Brain and other CNS", 
+                                                        "Leukemia", "Malignant bone", "Germ cell")))|>
+  mutate(sign = if_else(lower_limit <= 0 & upper_limit >= 0, "non_significant", "significant"))|>
+  rename(`Statistical significance` = sign)
+  
+
+```
+
+```{r}
+cbbPalette <- c("#e34234", "royalblue")
+
+ggplot(dat, aes(x = as.factor(cancer_type), y = estimates, ymin = lower_limit, 
+                ymax = upper_limit, linetype=model)) + 
+  geom_pointrange(aes(col = `Statistical significance`), position=position_dodge(width=0.75),size = 0.5) +
+  ylab(expression(paste(beta[WQS]," - Chemical mixture [95% CI]"))) +
+  scale_y_continuous(breaks = seq(-0.2, 1.0, 0.2),limits=c(-0.2, 1.0))+
+  geom_hline(aes(yintercept = 0), linetype="dashed", color="gray60") + 
+  scale_colour_manual(values=cbbPalette) + 
+  ggtitle("")+
+  xlab("")+
+  theme_bw()+
+  theme(panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(hjust = 0.5),
+        text=element_text(size=12,  family="Arial Black"),
+        axis.text.y = element_text(size = 12, family="Arial Black"),
+        axis.title.y = element_text(size = 12, family = "Arial Black"),
+        legend.text.align = 0,
+        strip.text=element_text(size=12, face="bold",family="Arial Black"),
+        strip.placement = "outside",
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom")+
+  guides(color=guide_legend(override.aes = list(shape=15, size=1.5)))
+```
+
+```{r}
+ggsave("pead_can_wqs.tiff",width = 8,height = 4)
+```
+
+# creating plot for constrained and unconstrained model
+```{r}
+df<- read.csv("aim2_main_result.csv") |>
+  mutate(sign = if_else(ci_ll <= 0 & ci_ul >= 0, "non_significant", "significant"))|>
+  rename(`Statistical significance` = sign) |>
+  mutate(cancer = factor(cancer, levels = c("Total Cancer", "Brain and Other CNS", 
+                                                        "Leukemia", "Malignant Bone", "Germ Cell")))
+
+
+cbbPalette <- c("#e34234", "royalblue")
+
+ggplot(df, aes(x = as.factor(cancer), 
+               y = beta, ymin = ci_ll,  ymax = ci_ul, 
+               shape = model_type)) + 
+  geom_pointrange(aes(col = `Statistical significance`), 
+                  position=position_dodge(width=0.75),size = 0.5) +
+  ylab(expression(paste(beta[WQS]," - Chemical mixture [95% CI]"))) +
+  scale_y_continuous(breaks = seq(-0.2, 0.8, 0.2),limits=c(-0.2, 0.9))+
+  geom_hline(aes(yintercept = 0), linetype="dashed", color="gray60") + 
+  scale_colour_manual(values=cbbPalette) + 
+  ggtitle("")+
+  xlab("")+
+  labs(shape="gWQS model")+
+  theme_bw()+
+  theme(panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(hjust = 0.5),
+        text=element_text(size=12,  family="Arial Black"),
+        axis.text.y = element_text(size = 12, family="Arial Black"),
+        axis.title.y = element_text(size = 12, family = "Arial Black"),
+        legend.text.align = 0,
+        strip.text=element_text(size=12, face="bold",family="Arial Black"),
+        strip.placement = "outside",
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom")+
+  guides(color=guide_legend(override.aes = list(shape=15, size=1.5)))+
+  guides(shape = guide_legend(ncol = 2), color = guide_legend(ncol = 2))
+```
+
+```{r}
+ggsave("pead_can_final_wqs.tiff",width = 10,height = 4, dpi=300)
+```
+
+########################################################################################################################################################################################################
+# Aim3 results tables-did not create plots
+# gWQS repeated holdout with constrains
+```{r}
+gwqs_loop <- function(input_df, output_folder, outcomes, covariates=NULL, 
+                      chem_mix) {
+  # Loop through the list of outcomes
+  for (outcome in outcomes) {
+    # Construct the formula with specified covariates
+    formula <- paste(outcome, "~ wqs ", covariates)
+    
+    # Create the file names based on the outcome and model type
+    filename_prefix <- "model_output"
+    file_name_wqs <- paste0("nrh", "_", outcome, ".rda")
+    file_name_wqs_rh <- paste0("rh", "_", outcome, ".rda")
+    
+    # Perform the first model (gWQS)
+    wqs_res <- tryCatch(
+      gwqs(as.formula(formula), mix_name = chem_mix, offset = dat$live_birth,
+           zero_infl = FALSE, data = input_df, q = 10, validation = 0.6, b = 10,
+           b1_pos = TRUE, b1_constr = TRUE, family = "negbin", seed = 2023),
+      error = function(e) {
+        cat(paste("Error occurred for outcome:", outcome, "\n", "Error message:", e$message, "\n"))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(wqs_res)) {
+      next  # Move to the next outcome variable
+    } else {
+      # Save the first model output to RDA file
+      save(wqs_res, file = file.path(output_folder, file_name_wqs))
+    }
+    
+    # Perform the second model (gWQSRH)
+    wqs_res_rh <- tryCatch(
+      gwqsrh(as.formula(formula), mix_name = chem_mix, offset = dat$live_birth,
+             zero_infl = FALSE, data = input_df, q = 10, validation = 0.6, b = 100,
+             b1_pos = TRUE, b1_constr = TRUE, family = "negbin", seed = 2023, rh = 5),
+      error = function(e) {
+        cat(paste("Error occurred for outcome:", outcome, "\n", "Error message:", e$message, "\n"))
+        return(NULL)
+      }
+    )
+    
+    if (is.null(wqs_res_rh)) {
+      next  # Move to the next outcome variable
+    } else {
+      # Save the second model output to RDA file
+      save(wqs_res_rh, file = file.path(output_folder, file_name_wqs_rh))
+    }
+  }
+}
+
+
+```
+
+#run function
+```{r, warning=FALSE}
+
+gwqs_loop(input_df = dat,
+          output_folder = "~/Dissertation/test/rh_bd_constrain", 
+          outcomes = names(dat)[58:72],  #update location of outcomes
+          covariates = "+ m_blk_pct + f_blk_pct + m_hisp_pct + f_hisp_pct + m_heal_ins_pct + f_heal_ins_pct +vehicle_pct + sing_pent_pct + ssi_snap_pct ",
+          chem_mix = names(dat)[2:33])
+```
+
+```{r}
+load("~/Dissertation/test/nrh_cardiac.rda") 
+
+summary(wqs_res)
+gwqs_barplot(wqs_res)
+
+```
+
+# Creating a table for 
+```{r}
+load("~/Dissertation/test/cancer/rh_total_can.rda") 
+load("~/Dissertation/test/cancer/rh_leukemia.rda") 
+load("~/Dissertation/test/cancer/rh_cns_and_miscellaneous_intracranial_and_intraspinal.rda")
+load("~/Dissertation/test/cancer/rh_malignant_bone_tumors.rda") 
+load("~/Dissertation/test/cancer/rh_germ_cell_tumors_trophoblastic_tumors_and_neopla.rda")
+
+
+total_can<- wqs_res_rh$final_weights |>
+  mutate(outcome = "total_cancer")
+rm(wqs_res_rh)
+
+leukemia<- wqs_res_rh$final_weights |>
+  mutate(outcome = "leukemia")
+rm(wqs_res_rh)
+
+cns<- wqs_res_rh$final_weights |>
+  mutate(outcome = "cns")
+rm(wqs_res_rh)
+
+malg_bone<- wqs_res_rh$final_weights |>
+  mutate(outcome = "malg_bone")
+rm(wqs_res_rh)
+
+germ_cell<- wqs_res_rh$final_weights |>
+  mutate(outcome = "germ_cell")
+rm(wqs_res_rh)
+  
+
+# Get a list of all dataframes in the global environment
+dfs <- mget(ls())
+
+# Combine all dataframes into a single dataframe
+combined_df <- bind_rows(dfs)|>
+  clean_names()|>
+  mutate(mix_name = str_to_title(mix_name),
+         across(where(is.numeric), ~as.numeric(sprintf("%.2f", .))),
+         summary = sprintf("%.2f (%.2f, %.2f)", estimate, x2_5_percent, x97_5_percent)) |>
+  select(-c(2:4)) |>
+  pivot_wider(names_from = outcome, values_from = summary) |>
+  select(mix_name, total_cancer, cns, leukemia, malg_bone, germ_cell)
+
+write_csv(combined_df, "cancer_gwqs_rh_weights.csv")
+```
+
+
+# creating plot for constrained and unconstrained model/non-repeated holdout
+```{r}
+df <- read.csv("aim3_main_results.csv") |>
+  mutate(sign = if_else(p_val <= 0.05, "significant", "non_significant")) |>
+  rename(`Statistical significance` = sign) |>
+  mutate(Birth_defect = factor(Birth_defect, levels = c("Total defects", "Cranial", 
+                                                        "Cardiac", "Renal", "Musculoskeletal", "Hepatic", "Ophthalmic"))) |>
+  mutate(ymin = beta - 1.96 * `std_err`, ymax = beta + 1.96 * `std_err`)
+
+cbbPalette <- c("royalblue", "#e34234")
+
+ggplot(df, aes(x = as.factor(Birth_defect), y = beta, ymin = ymin, ymax = ymax, shape = model_type)) + 
+  geom_pointrange(aes(color = `Statistical significance`), position = position_dodge(width = 0.75), size = 0.5) +
+  ylab(expression(paste(beta[WQS], " - Chemical mixture [Std Err]"))) +
+  scale_y_continuous(breaks = seq(-0.2, 0.8, 0.2), limits = c(-0.2, 0.9)) +
+  geom_hline(aes(yintercept = 0), linetype = "dashed", color = "gray60") + 
+  scale_colour_manual(values = cbbPalette) + 
+  ggtitle("") +
+  xlab("") +
+  labs(shape = "gWQS model") +
+  theme_bw() +
+  theme(panel.border = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank(),
+        axis.line = element_line(colour = "black"),
+        plot.title = element_text(hjust = 0.5),
+        text = element_text(size = 10, family = "Arial Black"),
+        axis.text.y = element_text(size = 10, family = "Arial Black"),
+        axis.title.y = element_text(size = 10, family = "Arial Black"),
+        legend.text.align = 0,
+        strip.text = element_text(size = 10, face = "bold", family = "Arial Black"),
+        strip.placement = "outside",
+        axis.ticks.x = element_blank(),
+        legend.position = "bottom") +
+  guides(color = guide_legend(override.aes = list(shape = 15, size = 1.5)),
+         shape = guide_legend(ncol = 2), 
+         color = guide_legend(ncol = 2))
+
+```
+
+```{r}
+ggsave("birth_def_final_wqs.tiff",width = 10,height = 4, dpi=300)
+```
+
+

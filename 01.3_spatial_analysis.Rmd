@@ -1,0 +1,198 @@
+---
+title: "01.3_spatial_analysis"
+author: "Taiba"
+date: "2023-05-30"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tmap, sp, sf, tigris, spdep)
+```
+
+```{r}
+#join statefp code with dat_fin
+state_fips<- read_csv("state_fips.csv")
+
+dat<- read_csv("mapping_dat_final.csv") |>
+  left_join(state_fips, by="state") |>
+  rename(statefp="state_fips_code", countyfp="county_fips_code")
+```
+
+#CONUS shapefile
+```{r}
+state_list<- list("al", "ar", "az", "ca", "co", "ct", "dc", "de", "fl", "ga", "ia", "id",
+                  "il", "in", "ks", "ky", "la", "ma", "md", "me", "mi", "mn", "mo", "ms",
+                  "mt", "nc", "nd", "ne", "nh", "nj", "nm", "nv", "ny", "oh", "ok", "or",
+                  "pa", "sc", "sd", "tn", "tx", "ut", "va", "vt", "wa", "wi", "wv", "wy", "ri")
+
+us_counties <- counties(state = state_list, cb = FALSE, resolution = "500k", year = "2019", class="sf") |>
+  clean_names()
+
+us_counties$countyfp <- as.numeric(us_counties$countyfp)
+us_counties$statefp <- as.numeric(us_counties$statefp)
+```
+
+```{r}
+dat_fin<- left_join(us_counties, dat, by=c("statefp","countyfp"))|>
+  mutate(across(19:48, ~replace(., is.na(.), -16.1181)))
+```
+
+#Producing maps
+# Created 12/05/23
+```{r}
+library(viridis)
+library(viridisLite)
+
+chem <- "pc_1"
+
+# Use a color-blind safe palette from viridis
+#color_palette <- viridis_pal()(5)
+
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+             breaks = quantile(dat_fin[[chem]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+            palette = viridis::viridis(4, alpha = 1, direction = 1, option = "D"),
+              title = "Mapping of pesticide index (PC1) for most-applied pesticides from 1992-2019") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_layout(legend.title.size = 1.2,
+            legend.text.size = 1) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "US_pestindex.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+#different color map -created initially
+
+```{r}
+w<-tm_shape(dat_fin)+
+  tm_polygons(col="pc_1",
+              breaks=quantile(dat_fin$pc_1, probs = c(0,.25,.5,.75,1)),
+              legend.is.portrait=F,
+              palette=c("#999999", "#E69F00", "#0072B2", "#D55E00"),
+              title="pc_1")+
+  tm_borders("gray90", alpha=.002)+
+  tm_layout(legend.title.size = 1.2,
+            legend.text.size = 1,
+            legend.stack = "horizontal",
+            frame = F)
+
+tmap_save(w,"pc1.tiff",
+          width = 12, height=12, dpi=150)
+```
+
+# Exploratory spatial data analysis (ESDA) - to perform this we are converting neighbors list object to spatial weights
+#spatial correlation- understanding spatial neighborhoods using poly2nb() and generating the spatial weights matrix using nb2listw() and specifying style ="B" produces binary weights, where neighbors are given the weight 1 and non-neighbors take the weight of 0. This style of weights is useful for producing neighborhood sums.
+
+# understanding spatial neighborhoods/ contiguity-based neighbors, used when geographic features are polygons. poly2nb(), is used for queen’s case neighbors, where all polygons that share at least one vertex are considered neighbors. This function take an sf object as an argument and produce a neighbors list object
+```{r}
+neighbors <- poly2nb(col_sp, queen = TRUE)
+
+summary(neighbors)
+```
+# Summary interpretation- On average, the counties in the CONUS area have 5.93 neighbors. The minimum number of neighbors in the dataset is 1 (there are 13 such tracts), and the maximum number of neighbors is 14 (the tract at row index 2697)
+
+# Calculating spatial weights
+```{r}
+col_sp <- as(dat_fin, "Spatial")
+col_nb <- poly2nb(col_sp) 
+col_listw <- nb2listw(col_nb, style = "B") # listw version of the neighborhood
+
+```
+
+# Spatial autocorrelation: The concept of spatial autocorrelation relates to Waldo Tobler’s famous “first law of geography,” which reads (Tobler 1970): Everything is related to everything else, but near things are more related than distant things.
+#spatial clustering- data values tend to be similar to neighboring data values
+
+# Global spatial autocorrelation using Moron's I using spdep package. It gives the relationship between observations and their neighbors 
+
+```{r}
+moran.test(dat_fin$pc_1, listw = col_listw)
+```
+# Interpretation of Moran's I- The Moran’s I statistic of 0.428 is positive, and the small p-value suggests that we reject the null hypothesis of spatial randomness in our dataset.As the statistic is positive, it suggests that our data are spatially clustered;a negative statistic would suggest spatial uniformity
+
+
+
+# Identifying clusters and spatial outliers with local indicators of spatial association (LISA), an extension of Global Moran's I statistic using localmoran_perm() function, implements LISA where statistical significance is calculated based on a conditional permutation-based approach. 
+
+```{r}
+set.seed(1983) #random number seed is set given that we are using the conditional permutation approach to calculating statistical significance
+
+dat_fin$scaled_pc_1 <- as.numeric(scale(dat_fin$pc_1)) #pc1 is converted to a z-score using scale(), which subtracts the mean from the estimate then divides by its standard deviation. This follows convention from GeoDa
+
+# LISA is computed with localmoran_perm() for the scaled value for pc1, using the contiguity-based spatial weights matrix. 999 conditional permutation simulations are used to calculate statistical significance, and the argument alternative = "two.sided" will identify both statistically significant clusters and statistically significant spatial outliers
+dfw_lisa <- localmoran_perm( 
+ dat_fin$scaled_pc_1, 
+listw = col_listw, 
+  nsim = 999L, 
+  alternative = "two.sided"
+) %>%
+  as_tibble() %>%
+  set_names(c("local_i", "exp_i", "var_i", "z_i", "p_i",
+              "p_i_sim", "pi_sim_folded", "skewness", "kurtosis"))
+
+# attaching LISA data frame to the Census tract shapes after computing the lagged value for pc1. #spatial lag calculated using lag.listw(), it refers to the neighboring values of an observation given a spatial weights matrix
+
+dfw_lisa_df <- dat_fin %>%
+  select(geoid, scaled_pc_1) %>%
+  mutate(lagged_estimate = lag.listw(col_listw, scaled_pc_1)) %>% 
+  bind_cols(dfw_lisa)
+
+#recode the data into appropriate categories for the LISA quadrant plot, using a significance level of p = 0.05
+
+dfw_lisa_clusters <- dfw_lisa_df %>% 
+  mutate(lisa_cluster = case_when(
+    p_i >= 0.05 ~ "Not significant",
+    scaled_pc_1 > 0 & local_i > 0 ~ "High-high",
+    scaled_pc_1 > 0 & local_i < 0 ~ "High-low",
+    scaled_pc_1 < 0 & local_i > 0 ~ "Low-low",
+    scaled_pc_1 < 0 & local_i < 0 ~ "Low-high"
+  ))
+
+#The LISA quadrant plot
+
+color_values <- c(`High-high` = "red", 
+                  `High-low` = "pink", 
+                  `Low-low` = "blue", 
+                  `Low-high` = "lightblue", 
+                  `Not significant` = "white")
+
+ggplot(dfw_lisa_clusters, aes(x = scaled_pc_1, 
+                              y = lagged_estimate,
+                              fill = lisa_cluster)) + 
+  geom_point(color = "black", shape = 21, size = 2) + 
+  theme_minimal() + 
+  geom_hline(yintercept = 0, linetype = "dashed") + 
+  geom_vline(xintercept = 0, linetype = "dashed") + 
+  scale_fill_manual(values = color_values) + 
+  labs(x = "PC 1 (z-score)",
+       y = "Spatial lag of PC 1 (z-score)",
+       fill = "Cluster type")
+
+ggsave("pc1_lisa_clusters.tiff",
+          width = 12, height=12, dpi=150)
+
+```
+
+# Interpretation- Observations falling in the top-right quadrant represent “high-high” clusters. Statistically significant clusters - those with a p-value less than or equal to 0.05 - are colored red on the chart. The bottom-left quadrant also represents spatial clusters, but instead includes lower-pc1 tracts that are also surrounded by tracts with similarly low pc1. The top-left and bottom-right quadrants are home to the spatial outliers, where values are dissimilar from their neighbors.
+
+
+# Cluster map using ggplot2 and geom_sf(). Here observations are visualized in relationship to their cluster membership and statistical significance
+```{r}
+
+ggplot(dfw_lisa_clusters, aes(fill = lisa_cluster)) + 
+  geom_sf(size = 0.1) + 
+  theme_void() + 
+  scale_fill_manual(values = color_values) + 
+  geom_text(aes(label = county_name), size = 3, nudge_y = 0.1)+
+  labs(fill = "Cluster type")
+
+ggsave("pc1_clusters_map.tiff",
+         width = 12, height=12, dpi=150)
+
+```
+

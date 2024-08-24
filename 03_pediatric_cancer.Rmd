@@ -1,0 +1,208 @@
+---
+title: "03_pediatric_cancer"
+output: pdf_document
+date: "2023-03-25"
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, stringr, zipcodeR, lubridate, tmap, sf, tigris)
+```
+
+
+#Reading pediatric cancer data
+```{r}
+ped_cancer <- read_csv("pediatric_cancer.csv") |>
+  clean_names()|>
+  mutate(zip9 = str_sub(zipdx, 1, 5)) |>
+  mutate(dob = format(ymd(dob), "%m/%d/%Y"))|>
+  select(-c(zipdx))
+
+```
+
+#Zipcode to county name
+```{r}
+zip_dat<- zipcodeR::search_state("NE") |> select(c(1,3,6)) |>
+  rename(zip9= "zipcode") |>
+  mutate(zip9=as.factor(zip9))
+
+ped_cancer<- ped_cancer |> left_join(zip_dat, by="zip9") 
+write_csv(ped_cancer, "ped_cancer_v1.csv")
+```
+
+
+#Aggregate pediatric cancer data by NE counties
+```{r}
+ped_cancer_v1< read_csv("ped_cancer_v1.csv")
+
+ped_cancer_v2<- ped_cancer_v1 |> 
+  group_by(county, dis2) |>
+  count() |>
+  pivot_wider(names_from = dis2, values_from = n, values_fill = 0) |>
+  clean_names()|>
+  mutate(total_can = rowSums(across(where(is.numeric)))) |>
+  drop_na()
+write_csv(ped_cancer_v2, "ped_cancer_v2.csv")
+```
+
+#Join pediatric population data
+# run 04_acs_census before this step
+```{r}
+ped_cancer_v3<- ped_cancer_v2 |>
+  left_join(ped_aggr, by="county")
+
+write_csv(ped_cancer_v3, "ped_cancer_v3.csv")
+```
+
+#pediatric cancer rate by county
+```{r}
+ped_cancer_v4<- ped_cancer_v3 |>
+  mutate(across(where(is.integer), as.numeric)) |>
+  mutate(across(1:12, ~ . / ped_popln)*100000)
+
+write_csv(ped_cancer_v4, "ped_cancer_v4.csv")
+```
+
+#barplot by cancer types
+```{r}
+dat_bx_plt<- read_csv("ped_cancer_v4.csv")  |>
+  pivot_longer(cols = -c(county, GEOID, geometry, ped_popln),
+               names_to = "cancer_type", values_to = "cancer_rate") |>
+  mutate(can_type_lable= substr(cancer_type, 1, 8))
+
+ggplot(dat_bx_plt, aes(x = cancer_rate, y = county)) +
+  geom_bar(stat = "identity") +
+  labs(title = "", x = "", y = "") +
+  theme_minimal()+
+  facet_grid(.~can_type_lable, scales = "free") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+```
+
+# Map pediatric cancers
+```{r}
+dat<- read_csv("ped_cancer_v4.csv")  |>
+rename(geoid10="GEOID")
+dat$geoid10<- as.character(dat$geoid10)
+
+ne_counties <- counties(state = "ne", cb = FALSE, resolution = "500k", year = "2010", class="sf") |>
+  clean_names()
+
+#join ped cancer data with ne county shapefile
+dat_map<- left_join(ne_counties, dat, by="geoid10")
+
+tm_shape(dat_map)+
+  tm_polygons(col="total_can",
+              breaks=quantile(dat_map$total_can, 
+                              probs = c(0,.25,.5,.75,1), na.rm = T),
+              legend.is.portrait=T,
+              palette="viridis",
+              title="total cancer per 100,000 children")+
+  tm_borders() +
+  tm_borders(col = "blue", lwd = 2, alpha = 0.5) 
+```
+
+```{r}
+# Read the CSV data
+dat <- read_csv("ped_cancer_v4.csv")
+
+# Rename the "GEOID" column to "geoid10"
+dat <- dat %>% rename(geoid10 = GEOID)
+
+# Convert "geoid10" to character type
+dat$geoid10 <- as.character(dat$geoid10)
+
+# Get Nebraska counties shapefile
+ne_counties <- counties(state = "NE", cb = FALSE, resolution = "500k", year = 2010) |>
+  clean_names()
+
+# Join ped cancer data with NE county shapefile
+dat_map <- left_join(ne_counties, dat, by = "geoid10")
+
+# Extract county name from the "county" column and remove "county" from the name
+dat_map <- dat_map |>
+  mutate(county_name = str_remove(str_to_title(county), " County"))
+
+# Plot the map
+w <- tm_shape(dat_map) +
+  tm_polygons(col = "lymphomas_and_reticuloendothelial_neoplasms",
+              breaks = quantile(dat_map$lymphomas_and_reticuloendothelial_neoplasms, probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = TRUE),
+              legend.is.portrait = TRUE,
+              palette = "viridis",
+              title = "Lymphoma and reticuloendothelial rate per 100,000 Children") +
+  tm_borders() +
+  tm_text(text = "county_name", size= 0.6) +
+  tm_borders(col = "blue", lwd = 2, alpha = 0.5)+
+   tm_compass(position = c("right", "top"))
+
+tmap_save(w, "ne_lymphoma_viridis_palette.tiff",
+          width = 12, height = 15, dpi = 150)
+```
+
+#########################################################################################################################################################
+##########################################################################################################################################################
+# Creating tables for journal
+```{r}
+dat <- read_csv("ped_cancer_v1.csv")
+
+#
+dat1 <- dat %>% mutate (dis2 = as.character(dis2))
+
+# Create a table showing the numbers for each type of diagnosis and calculate frequency as percentage
+diagnosis_table <- dat1 %>%
+  group_by(dis2) %>%
+summarise(count = n()) %>%
+  mutate(frequency = (count / sum(count)) * 100) %>%
+    arrange(desc(count))
+
+# Print the table
+print(diagnosis_table)
+
+#
+write.csv(diagnosis_table, "Ped_can_type_table1.csv")
+
+#### Table for sdoh variables
+
+dat <- read_csv("ped_can_chem_sdoh_v8.csv")
+```
+
+
+05/17/2024 #Cancer counts by county for Dr.Rogan
+```{r}
+
+library(tidyverse)
+dat<- read_csv("final_dissrt_analy_data.csv")
+
+# selecting county name and cancer sub-types
+dat1 <- dat %>%
+  select(34, 44:55)
+
+#
+tot_cancer <- sum(dat1[[13]], na.rm = TRUE) #total caner cases 2509
+
+#
+ write_csv(dat1, "drrogan_can_county.csv")
+ 
+ 
+ ########################################################
+ #pediatric cancer rate by county 05/29/24
+ 
+ dat <- read_csv("ped_cancer_v4.csv")
+ 
+ #
+ dat1 <- dat %>%
+   select(1:13) %>%
+ mutate(across(2:13, ~ round(., 2)))
+ 
+ #
+ write_csv(dat1, "drrogan_cancer_rate.csv")
+ 
+```
+
+
+
+
+
+
+
+

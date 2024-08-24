@@ -1,0 +1,165 @@
+---
+title: "acs_census"
+author: "Taiba"
+date: "2023-05-14"
+output: pdf_document
+---
+
+#birth defects 1995- 2014 
+#ped cancer 1987- 2014 
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidycensus, rmarkdown, knitr, stringr)
+# census_api_key("60cbacc5c89ceb76d50a175907d1a9af7a7f3a1b", install = TRUE)
+```
+
+```{r}
+decin_vars <- load_variables(2010,
+                      dataset="sf1", cache = TRUE)
+
+# Male pied vars: P012003, P012004, P012005, P012006, P012007, 
+# Female pied vars: P012027, P012028, P012029, P012030, P012031
+```
+
+#pediatric population 2010 decennial census - nebraska counties
+```{r}
+ped_popln <- get_decennial(
+  geography = "county", 
+  variables = c("P012003", "P012004", "P012005", "P012006", "P012007", "P012027", 
+                "P012028", "P012029", "P012030", "P012031"), 
+  state = "NE",
+  geometry = T,
+  year = 2010)
+
+```
+
+#aggregating pediatric popln
+```{r}
+# Aggregate values by variable1 and variable2
+ped_aggr <- ped_popln |>
+  select(GEOID, NAME, value) |>
+  group_by(GEOID, NAME) |>
+  summarize(ped_popln = sum(value)) |>
+  rename(county="NAME") |>
+  mutate(county = str_remove(county, ", Nebraska"))
+
+ped_popln_exp<- ped_aggr |>
+  as_tibble() |>
+  clean_names() |>
+  select(1:3)
+
+#pediatric population export
+write_csv(ped_popln_exp, "ped_popln_exp.csv")
+```
+
+#SDOH_pediatric_cancer_birth_defects
+```{r}
+#get list of variables from 2010-2014 census
+acs_variable_list<- load_variables(2014, "acs5", cache = T)
+ped_pop<- get_acs(geography = "county",
+                  state = "NE",
+                  year=2014,
+                  survey = "acs5",
+                  variables=c(mg1_pop= "B01001_003",mg2_pop= "B01001_004",mg3_pop= "B01001_005",mg4_pop= "B01001_006",mg5_pop= "B01001_007",
+                              fg1_pop= "B01001A_018",fg2_pop= "B01001A_019",fg3_pop= "B01001A_020",fg4_pop= "B01001A_021",fg5_pop= "B01001A_022",
+                              mg1_blk_pop= "B01001B_003",mg2_blk_pop= "B01001B_004",mg3_blk_pop= "B01001B_005",mg4_blk_pop= "B01001B_006",mg5_blk_pop= "B01001B_007",
+                              fg1_blk_pop= "B01001B_018",fg2_blk_pop= "B01001B_019",fg3_blk_pop= "B01001B_020",fg4_blk_pop= "B01001B_021",fg5_blk_pop= "B01001B_022",
+                              mg1_hisp_pop= "B01001I_003",mg2_hisp_pop= "B01001I_004",mg3_hisp_pop= "B01001I_005",mg4_hisp_pop= "B01001I_006",mg5_hisp_pop= "B01001I_007",
+                              fg1_hisp_pop= "B01001I_018",fg2_hisp_pop= "B01001I_019",fg3_hisp_pop= "B01001I_020",fg4_hisp_pop= "B01001I_021",fg5_hisp_pop= "B01001I_022",
+                              ssi_snap="B22002_003",
+                              no_hel_ins_mu6="B27001_005",no_hel_ins_m6_18="B27001_008",
+                              no_hel_ins_fu6="B27001_033",no_hel_ins_f6_18="B27001_036",
+                              foregin_born="B06012_013",
+                              poverty_100="B06012_002",
+                              sing_prnt_u6="B05009_013", sing_prnt_6_17="B05009_031",
+                              un_empl="B23007_013",
+                              education="B16010_002",
+                              langu="B06007_008",
+                              no_vehic="B08201_002",
+                              median_incom="B10010_001",
+                              hous_w_pedpop="B11005_002",hous_wo_pedpop="B11005_011"
+                              ),
+                  geometry = T,
+                  output = "wide") %>% clean_names()
+
+```
+
+
+```{r}
+#Total population
+ped_pop$m_pop <- as.numeric(ped_pop$mg1_pop_e+ ped_pop$mg2_pop_e+ ped_pop$mg3_pop_e+
+                              ped_pop$mg4_pop_e+ped_pop$mg5_pop_e)
+ped_pop$f_pop <- as.numeric(ped_pop$fg1_pop_e+ ped_pop$fg2_pop_e+ ped_pop$fg3_pop_e+
+                              ped_pop$fg4_pop_e+ped_pop$fg5_pop_e)
+
+```
+
+
+```{r}
+#Total households
+ped_pop$households<-as.numeric(ped_pop$hous_w_pedpop_e+ped_pop$hous_wo_pedpop_e)
+#Population by race
+ped_pop$m_blk_pop<-as.numeric(ped_pop$mg1_blk_pop_e+ped_pop$mg2_blk_pop_e+ped_pop$mg3_blk_pop_e+
+                                ped_pop$mg4_blk_pop_e+ped_pop$mg5_blk_pop_e)
+ped_pop$f_blk_pop<-as.numeric(ped_pop$fg1_blk_pop_e+ped_pop$fg2_blk_pop_e+ped_pop$fg3_blk_pop_e+
+                                ped_pop$fg4_blk_pop_e+ped_pop$fg5_blk_pop_e)
+ped_pop$m_hisp_pop<- as.numeric(ped_pop$mg1_hisp_pop_e+ped_pop$mg2_hisp_pop_e+ped_pop$mg3_hisp_pop_e+
+                                  ped_pop$mg4_hisp_pop_e+ped_pop$mg5_hisp_pop_e)
+ped_pop$f_hisp_pop<- as.numeric(ped_pop$fg1_hisp_pop_e+ped_pop$fg2_hisp_pop_e+ped_pop$fg3_hisp_pop_e+
+                                  ped_pop$fg4_hisp_pop_e+ped_pop$fg5_hisp_pop_e)
+
+
+#health insurance
+ped_pop$m_ins_cnt<-as.numeric(ped_pop$no_hel_ins_mu6e+ped_pop$no_hel_ins_m6_18e)
+ped_pop$f_ins_cnt<-as.numeric(ped_pop$no_hel_ins_fu6e+ped_pop$no_hel_ins_f6_18e)
+
+#single parent
+ped_pop$sing_prnt_cnt<- as.numeric(ped_pop$sing_prnt_u6e+ped_pop$sing_prnt_6_17e)
+
+write.csv(ped_pop,"cenus_api_extract.csv")
+```
+
+
+```{r}
+#START here
+dat<- ped_pop[c(1,2,64,73,75,81,83,85,87,95:105)]
+
+#calculating percentages - Exclusive to pediatric population
+dat$m_blk_pct<- as.numeric((dat$m_blk_pop/dat$m_pop)*100)
+dat$f_blk_pct<- as.numeric((dat$f_blk_pop/dat$f_pop)*100)
+dat$m_hisp_pct<- as.numeric((dat$m_hisp_pop/dat$m_pop)*100)
+dat$f_hisp_pct<- as.numeric((dat$f_hisp_pop/dat$f_pop)*100)
+dat$m_heal_ins_pct<- as.numeric((dat$m_ins_cnt/dat$m_pop)*100)
+dat$f_heal_ins_pct<- as.numeric((dat$f_ins_cnt/dat$f_pop)*100)
+dat$sing_pent_pct <- as.numeric(dat$sing_prnt_cnt/(dat$m_pop+dat$f_pop)*100)
+dat$ssi_snap_pct<- as.numeric((dat$ssi_snap_m/dat$households)*100)
+dat$vehicle_pct<- as.numeric((dat$no_vehic_e/dat$households)*100)
+#
+write.csv(dat, "ped_sdohProcessed.csv")
+
+# save same file in rda format as backup
+save(dat, file = "ped_sdohProcessed.RDA")
+```
+
+```{r}
+load("ped_sdohProcessed.RDA")
+```
+
+#removing geometry variable (as_tibble) and saving count variables separately for stratified analysis
+```{r}
+sdh <- dat |>
+  as_tibble()|>
+  select(c(1,11:20)) |>
+  rename(geoid10= "geoid")
+
+#
+sdh$geoid10 <- as.numeric(sdh$geoid10)
+
+#
+write.csv(sdh, "ped_sdohcount.csv")
+
+# save same file in rda format as backup
+save(sdh, file = "ped_sdohcount.RDA")
+```
+

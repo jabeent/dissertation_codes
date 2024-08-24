@@ -1,0 +1,96 @@
+---
+title: "01.1_chemical_correlations"
+author: "Taiba"
+date: "2023-04-22"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, reshape2)
+```
+
+```{r}
+load("final_chem_v5_backup.RDA")
+```
+
+#boxplots for each chemical
+```{r}
+
+ggplot(chemi_class, aes(y = compound, x = log(median_pest))) +
+  geom_boxplot() +
+  labs(title = "",
+       x = "Median pesticide applied (1992 - 2019) - Log scale", 
+       y = "") +
+  facet_grid(factor(class, levels=c("Herbicide", "Insecticide", "Fungicide"))~ ., scales = "free_y", 
+             switch = "y", space = "free_y") +
+  theme_bw() +
+  theme(axis.text.x = element_text(angle = 0, hjust = 1, size = 10.5),
+        axis.text.y = element_text(size = 10.5),
+        strip.text = element_text(colour = "black", size = 10.5),
+        strip.text.x = element_text(colour = "black", size = 10.5),
+        strip.text.y = element_text(colour = "black", size = 7))
+
+
+#ggsave("chemical_box_plt.tiff", 
+      # width = 6,height = 9,
+      # dpi=300)
+```
+
+
+#correlation matrix
+```{r}
+# pivot from long to wide format
+chemi_class_wide <- chemi_class[c(1:4)] %>%
+  pivot_wider(names_from = compound, values_from = median_pest)|>
+  mutate_at(vars(3:32), ~log10(.+0.0000001)) 
+
+# LOAD new index variables
+index_vars_df<- read_csv("index_scores.csv")
+
+# join index variables with the log-transformed chemical data
+chem_df<- cbind(chemi_class_wide, index_vars_df)
+```
+
+#correlation matrix
+```{r}
+desired_order <- c("2,4-D", "ATRAZINE", "ACETOCHLOR","CLETHODIM", "DICAMBA","GLYPHOSATE", 
+                                      "IMAZETHAPYR", "PARAQUAT", "PENDIMETHALIN","CHLORIMURON","METOLACHLOR",
+                                      "METRIBUZIN","METSULFURON", "NICOSULFURON", "PICLORAM", "SETHOXYDIM", 
+                                      "SIMAZINE","THIFENSULFURON","TRIBENURON METHYL", "TRICLOPYR", "TRIFLURALIN","CARBARYL", "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA",
+                                        "DIMETHOATE", "ESFENVALERATE","PERMETHRIN", "CHLOROTHALONIL","MANCOZEB","PROPICONAZOLE")
+
+dat <- chem_df |>
+    rename_all(~str_to_title(.))
+
+#correlation matrix
+cormat<- round(x=cor(dat[c(3:35)], method = "spearman", 
+                     use= "complete.obs"), digits=2) |>
+  melt() 
+
+
+ggplot(cormat, aes(x=Var2, y=Var1, fill=value)) +
+  geom_tile(color="white")+
+  scale_fill_gradient2(low="red", high="blue", mid="white",
+                       midpoint=0,
+                       limit=c(-1,1), space= "Lab",
+                       name="Spearman Correlation | Pesticides applied in US Counties (1992-2019)")+
+  geom_text(aes(label = round(value, 2)), size = 3, color = "black") + # Add text labels
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, size = 12, hjust = 1),
+        axis.text.y = element_text(angle = 0, vjust = 1, size = 12, hjust = 1),
+        axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        panel.grid.major = element_blank(),
+        panel.border = element_blank(),
+        panel.background = element_blank(),
+        axis.ticks = element_blank(),
+        legend.position = "bottom", legend.box = "horizontal")+
+  coord_fixed()
+
+ggsave("chemical_correlations_w_index.tiff",
+       width=12, height= 10, dpi=300)
+```
+
+
+

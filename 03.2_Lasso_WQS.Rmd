@@ -1,0 +1,401 @@
+---
+title: "03.2_Lasso_WQS"
+author: "Taiba"
+date: "2023-06-15"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, caret, Hmisc, glmnet, Matrix)
+```
+
+
+#Reading pediatric cancer and pesticide data using part 1 or 32 chemicals
+```{r}
+dat <- read_csv("ped_can_chem_sdoh_v8.csv")
+```
+
+# Removing any missing values and environmental variables are already log transformed. Dropped the NA values in pediatric cancer and now we have 82 obs/82 NE counties and 76 variables.
+```{r}
+
+data_lasso = dat |>
+  select(c(20:28, 30:61, 63:75))|>
+  drop_na() |>
+  mutate_all(~ (. - mean(.)) / sd(.))
+```
+
+# Creating relevant matrices and vectors
+```{r}
+ # create a matrix of Predictor variables as x (columns 2 to 33)
+X <- as.matrix(data_lasso[c(1:41)])
+
+# Extracting outcome variable total_can (column 46)
+# Extracting cns as outcome variable (column 35)
+# Extracting leukemia as outcome variable (column 37)
+# Extracting lymphoma as outcome variable (column 38)
+Y <- as.matrix(data_lasso[c(42:53)])
+
+```
+
+
+```{r}
+pacman::p_load(gglasso, grpreg, sparsegl, Matrix, glmnet, stabs)
+
+var_selec <- function(X, Y) {
+  results <- list()
+  for (i in 1:12) {
+    y <- Y[, i]
+    # Group graphical Lasso
+    gr_cv <- cv.gglasso(X, y, group=NULL, loss="ls", pred.loss="L2",  nfolds=10)
+    gr_min_beta <- coef(gr_cv, s = gr_cv$lambda.min)[-1]
+  
+    # Group Lasso
+    grpp_cv <- cv.grpreg(X, y, penalty="grLasso",seed=5678,nfolds = 10)
+    grpp_min_beta <- coef(grpp_cv, s = grpp_cv$lambda.min)[-1]
+  
+    #Sparse lasso
+    sparse_cv<- cv.sparsegl(X, y, family = "gaussian", nfolds = 10)
+    sparse_min_beta<- coef(sparse_cv, s= sparse_cv$lambda.min)[-1]
+
+
+    #Stability selection with error control - input cross-validated lambda.min from cv-glmnet
+    stab_lambda_min <- cv.glmnet(X, y, nfolds=10)$lambda.min
+    stab_maxCoef <- stabsel(X, y, fitfun = glmnet.lasso_maxCoef, args.fitfun = list(lambda = stab_lambda_min), cutoff = 0.75, PFER = 1)
+    stab_maxCoef_selec<- stab_maxCoef$max
+  
+    # Store results in list
+    results[[paste0("outcome", i)]] <- as.data.frame(list(gr_lasso = gr_min_beta, 
+                                                          grpp_lasso = grpp_min_beta,
+                                                          sparse_lasso = sparse_min_beta,
+                                                          stab_cv_glmnet = stab_maxCoef_selec))
+  }
+  # Return list of results
+  return(results)
+}
+```
+
+#result
+```{r}
+res<- var_selec(X,Y)
+
+# Convert the list to a dataframe
+df <- bind_rows(res, .id = "list_name")
+```
+
+###########################################################################################
+##########################################################################################
+#Let's take a quick look at our design matrix.
+```{r}
+dim(x)
+colnames(x)
+#View(x)
+```
+
+## Data Visualization: A few quick plots to examine associations between exposures and the outcome. First, chemical exposures:
+
+```{r}
+# Visualize  x variables
+featurePlot(x = x[,1:58],
+            y = y,
+            between = list(x = 1, y = 1), 
+            type = c("g", "p", "smooth"))
+
+```
+# Lasso w/ CV: We'll begin by looking at the lasso applied to the complete design matrix. In the following, we'll use CV to identify tuning parameters; this is a random process, so we'll set the seed to ensure reproducibility. First we'll use a specified grid of tuning parameter values and fit the lasso model for each.
+
+```{r lasso}
+set.seed(2)
+lam_grid <- .5 ^ (-20:20)
+
+lasso.mod = glmnet(x, y, alpha = 1, lambda = lam_grid)
+```
+
+#We can explore the results using a coefficient path plot or numerically
+```{r}
+plot(lasso.mod)
+coef(lasso.mod)[,10]
+```
+#Some built-in functions will conduct a cross-validation analysis and identify the "best" tuning parameter
+```{r}
+set.seed(2)
+# n-folds is set to a default of 10 for cv.glmnet
+cv.out = cv.glmnet(as.matrix(x), y, alpha = 1)
+
+plot(cv.out)
+coef(cv.out)
+
+best_lambda = cv.out$lambda.min
+best_lambda
+```
+
+#Optional arguments to `glmnet` can be useful -- in particular, `weights` can be used in the context of the adaptive lasso and `penalty.factor` can separate penalized variables from confounders. 
+
+```{r}
+is_penalized = c(rep(1, ncol(x[,1:58])))
+lasso = glmnet(x, y, 
+               penalty.factor = is_penalized,
+               alpha = 1)
+plot(lasso)
+```
+
+# Use cross-validation (CV) to find best lambda value # is 64.50098 (total_cancer); 11.81(cns tumor); 4.1 (leukemia), 4.1(lymphoma)
+```{r}
+cv.lasso = cv.glmnet(as.matrix(x), y, 
+                     penalty.factor = is_penalized,
+                     type.measure = "mse", alpha = 1)
+plot(cv.lasso)
+best_lambda = cv.lasso$lambda.min
+best_lambda
+```
+
+#Let's examine the model with the best CV score. # intercept is 547.3815 (tot_can); 90.37(cns), 26.43(leukemia), 26.43(lymphoma)
+
+```{r}
+# Lasso model using cross-validated lambda value
+lasso.mod = glmnet(as.matrix(x), y, 
+                   penalty.factor = is_penalized,
+                   alpha = 1, lambda = best_lambda)
+
+coef_lasso = coef(lasso.mod)
+coef_lasso
+```
+
+# Find the number of non-zero estimates ; 1 including the intercept (tot_cancer); 4(cns);7(leukemia); 7(lymphoma)
+```{r}
+# Assuming coef_lasso is the coefficient vector obtained from the Lasso model
+non_zero_count <- nnzero(coef_lasso)
+
+non_zero_count
+```
+
+# Find variables that are non-zero
+```{r}
+dimnames(coef_lasso)[[1]][which(coef_lasso != 0)]
+```
+
+# Find the MSE
+```{r}
+lasso.pred <-  predict(lasso.mod, newx = as.matrix(x))
+lasso_mse <- mean((lasso.pred - y)^2)
+lasso_mse
+```
+
+#The final code chunk saves the best lasso coefficients for later use
+```{r combo_plot_lasso}
+
+lasso_beta <- cbind(rownames(coef_lasso), as.vector(coef_lasso)) %>%
+  as_tibble() %>%
+  rename(variable = 1, beta = 2) %>%
+  mutate(beta = as.numeric(beta)) %>%
+  filter(variable != "(Intercept)") %>%
+  mutate(method = "Lasso")
+
+lasso_beta
+```
+########################################################################################################################################################################################
+#wqs model 07/16/2023
+```{r}
+chem_sdoh <- read_csv("ped_can_chem_sdoh_v8.csv") |>
+  select(c(1, 20:28, 30:61))|>
+  drop_na() 
+
+ped_ca_counts<- read_csv("ped_cancer_v3.csv") |>
+  select(-c(1,16)) |>
+  rename("geoid10"= "GEOID")
+
+dat_wqs<- chem_sdoh |> left_join(ped_ca_counts, by="geoid10")
+```
+
+```{r}
+chem_mix<- names(dat_wqs)[11:42]
+
+wqs_res<- gwqs(total_can ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat_wqs$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat_wqs,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = TRUE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+```
+
+
+```{r}
+gwqs_scatterplot(wqs_res)
+gwqs_summary_tab(wqs_res)
+
+gwqs_barplot(wqs_res)
+gwqs_weights_tab(wqs_res)
+```
+
+#repeated holdout
+```{r}
+wqs_res_rh <- gwqsrh(total_can ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat_wqs$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat_wqs,
+               q=10, validation= 0.6, b = 100, 
+               b1_pos = TRUE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023,
+               rh=5)
+```
+
+```{r}
+gwqs_summary_tab(wqs_res_rh)
+gwqsrh_boxplot(wqs_res_rh)
+```
+
+
+
+
+
+###########################################################################################
+######################################################################################
+######################################################################################
+
+# 06/17/23 - Don't use this part of the analysis for dissertation
+#Reading pediatric cancer and pesticide data using part 2 or 49 chemicals
+```{r}
+dat <- read_csv("ped_can_chem_part2.csv")
+```
+
+# Removing any missing values and environmental variables are already log transformed. Dropped the NA values in pediatric cancer and now we have 78 obs/78 NE counties.
+```{r}
+
+data_lasso = dat %>%
+  na.omit()
+```
+
+# Creating relevant matrices and vectors
+```{r}
+ # create a matrix of Predictor variables as x (columns 2 to 50)
+x <- data_lasso[, 2:50] 
+
+# Extracting outcome variable (column 63)
+# Extracting cns as outcome variable (column 52)
+# Extracting leukemia as outcome variable (column 54)
+# Extracting lymphoma as outcome variable (column 55)
+y <- data_lasso$lymphomas_and_reticuloendothelial_neoplasms 
+
+```
+
+#Let's take a quick look at our design matrix.
+```{r}
+dim(x)
+colnames(x)
+#View(x)
+```
+
+## Data Visualization: A few quick plots to examine associations between exposures and the outcome. First, chemical exposures:
+
+```{r}
+# Visualize  x variables
+featurePlot(x = x[,1:49],
+            y = y,
+            between = list(x = 1, y = 1), 
+            type = c("g", "p", "smooth"))
+```
+# Lasso w/ CV: We'll begin by looking at the lasso applied to the complete design matrix. In the following, we'll use CV to identify tuning parameters; this is a random process, so we'll set the seed to ensure reproducibility. First we'll use a specified grid of tuning parameter values and fit the lasso model for each.
+
+```{r lasso}
+set.seed(2)
+lam_grid <- .5 ^ (-20:20)
+
+lasso.mod = glmnet(x, y, alpha = 1, lambda = lam_grid)
+```
+
+#We can explore the results using a coefficient path plot or numerically
+```{r}
+plot(lasso.mod)
+coef(lasso.mod)[,10]
+```
+#Some built-in functions will conduct a cross-validation analysis and identify the "best" tuning parameter
+```{r}
+set.seed(2)
+# n-folds is set to a default of 10 for cv.glmnet
+cv.out = cv.glmnet(as.matrix(x), y, alpha = 1)
+
+plot(cv.out)
+coef(cv.out)
+
+best_lambda = cv.out$lambda.min
+best_lambda
+```
+
+#Optional arguments to `glmnet` can be useful -- in particular, `weights` can be used in the context of the adaptive lasso and `penalty.factor` can separate penalized variables from confounders. 
+
+```{r}
+is_penalized = c(rep(1, ncol(x[,1:49])))
+lasso = glmnet(x, y, 
+               penalty.factor = is_penalized,
+               alpha = 1)
+plot(lasso)
+```
+
+# Use cross-validation (CV) to find best lambda value # is 35.37 (total_cancer); 18.73(cns);3.3(leukemia); 6.05(lymphoma)
+```{r}
+cv.lasso = cv.glmnet(as.matrix(x), y, 
+                     penalty.factor = is_penalized,
+                     type.measure = "mse", alpha = 1)
+plot(cv.lasso)
+best_lambda = cv.lasso$lambda.min
+best_lambda
+```
+
+#Let's examine the model with the best CV score. # intercept is 583.22 (tot_can); 119.48(cns); 8.8(leukemia); 406.887(lymphoma)
+```{r}
+# Lasso model using cross-validated lambda value
+lasso.mod = glmnet(as.matrix(x), y, 
+                   penalty.factor = is_penalized,
+                   alpha = 1, lambda = best_lambda)
+
+coef_lasso = coef(lasso.mod)
+coef_lasso
+```
+
+# Find the number of non-zero estimates ; 2 including the intercept (tot_cancer); 3(cns);13(leukemia);  12(lymphoma)
+```{r}
+# Assuming coef_lasso is the coefficient vector obtained from the Lasso model
+non_zero_count <- nnzero(coef_lasso)
+
+non_zero_count
+```
+
+# Find variables that are non-zero
+```{r}
+dimnames(coef_lasso)[[1]][which(coef_lasso != 0)]
+```
+
+# Find the MSE
+```{r}
+lasso.pred <-  predict(lasso.mod, newx = as.matrix(x))
+lasso_mse <- mean((lasso.pred - y)^2)
+lasso_mse
+```
+
+#The final code chunk saves the best lasso coefficients for later use
+```{r combo_plot_lasso}
+
+lasso_beta <- cbind(rownames(coef_lasso), as.vector(coef_lasso)) %>%
+  as_tibble() %>%
+  rename(variable = 1, beta = 2) %>%
+  mutate(beta = as.numeric(beta)) %>%
+  filter(variable != "(Intercept)") %>%
+  mutate(method = "Lasso")
+
+lasso_beta
+```
+
+###########################################################################################
+######################################################################################
+######################################################################################
+
+

@@ -1,0 +1,87 @@
+---
+title: "07_zero_infl_model"
+author: "Taiba"
+date: "2023-07-23"
+output: pdf_document
+---
+
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, pscl)
+```
+
+
+```{r}
+dat<- read_csv("final_dissrt_analy_data.csv")
+```
+
+
+```{r}
+library(MASS)
+
+negative_binomial_regression <- function(input_df, exposure_vars, outcomes, offset_var, output_folder) {
+  result_list <- list()
+  
+  for (outcome in outcomes) {
+    for (exposure in exposure_vars) {
+      # Check if exposure, outcome, and offset variables exist in the input_df
+      if (!(exposure %in% colnames(input_df)) || !(outcome %in% colnames(input_df)) || !(offset_var %in% colnames(input_df))) {
+        cat(paste("Error: One or more variables not found in the input_df for outcome:", outcome, "and exposure:", exposure, "\n"))
+        next
+      }
+      
+      # Create the formula for negative binomial regression
+      formula <- as.formula(paste(outcome, "~ offset(", offset_var, ") + ", exposure))
+      
+      # Fit the negative binomial model
+      model <- tryCatch(glm.nb(formula, data = input_df), error = function(e) NULL)
+      
+      if (is.null(model)) {
+        cat(paste("Error occurred for outcome:", outcome, "and exposure:", exposure, "\n", "Error message:", e$message, "\n"))
+      } else {
+        # Extract the coefficients, confidence intervals, and p-values
+        coef_table <- data.frame(
+          Outcome = outcome,
+          Exposure = exposure,
+          Beta_Value = coef(model)[["(Intercept)"]],
+          CI_Lower = confint.default(model)[1, 2],
+          CI_Upper = confint.default(model)[2, 2],
+          P_Value = summary(model)$coefficients[2, 4]
+        )
+        
+        # Save the results to the output folder
+        file_name <- paste0(outcome, "_", exposure, "_results.csv")
+        file_path <- file.path(output_folder, file_name)
+        write.csv(coef_table, file = file_path, row.names = FALSE)
+        
+        # Append the results to the result_list
+        result_list[[paste(outcome, "_", exposure)]] <- coef_table
+      }
+    }
+  }
+  
+  # Combine all the results into a single dataframe
+  result_df <- do.call(rbind, result_list)
+  
+  return(result_df)
+}
+
+```
+
+
+```{r}
+# Example usage
+input_df <- dat
+exposure_vars <- names(dat)[2:33] # List of exposure variable names
+outcomes <- names(dat)[59:72] # List of outcome variable names
+offset_var <- dat$live_birth # Name of the offset variable in the data frame
+output_folder <-  "~/Dissertation/test" # The folder where the result CSV files will be saved
+
+result_df <- zero_inflated_poisson_regression(input_df, exposure_vars, outcomes, offset_var, output_folder)
+
+```
+
+
+
+

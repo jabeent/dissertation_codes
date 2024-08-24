@@ -1,0 +1,700 @@
+---
+title: "07.WQS_mixture_pediatric_cancer072923"
+author: "Taiba"
+date: "2023-07-29"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse,broom, tidyr, dplyr, janitor,gWQS)
+```
+
+#Load final dissertation data with sdoh count and percentages
+```{r}
+dat<- read_csv("final_dissrt_analy_sdh_count_datav1.csv")
+```
+
+# define chemicals to include in the mixture
+#correlation and log transformation already done 
+```{r}
+chem_mix<- names(dat)[2:33] # dat for log-transformed scale
+# dataquant for decile chemical scale data
+```
+
+# Quantile-transformation of chemical mixture
+```{r}
+dataquant <- dat |>
+  mutate(across(all_of(chem_mix), ~ntile(., 10))) |>
+  rename_with(~paste0(.x, "_quantile"), all_of(chem_mix))
+
+```
+
+## llinear model w/ one chemical- guassian does not work for my data (dataset is for poisson model)
+
+## multiple linear regression- guassian does not work for my data (dataset is for poisson model)
+
+```{r}
+chemicals
+multipleGLM = glm(total_can ~ m_blk_pct + f_blk_pct + m_hisp_pct + f_hisp_pct + m_heal_ins_pct + f_heal_ins_pct + sing_pent_pct + ssi_snap_pct +  vehicle_pct, data = dat)
+summary(multipleGLM)
+matrix_coef <- summary(multipleGLM)$coefficients  # Extract coefficients in matrix
+matrix_coef   
+
+#write_csv(matrix_coef, "totalcan_multiplereg.csv")
+```
+############################################################################################
+###############################################################################################
+#  Analysis strategy 1
+#WQS regression unadjusted without covariates
+# fit an unadjusted model to look at the association between the chemicals and the outcome
+# outcome = outcome variable/cancer/birth defects
+## there's a signal only in the positive direction
+#summary(dat[,chemicals])
+```{r}
+pacman::p_load(tidyverse, janitor, gWQS)
+
+chem_mix<- names(dat)[2:33]
+offset <- dat$live_birth
+
+results1 = gwqs(total_bd ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$live_birth,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = TRUE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 > 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+
+## there's a signal only in the positive direction/ negative non-significant
+```{r}
+chem_mix<- names(dat)[2:33]
+offset <- dat$live_birth
+
+results1 = gwqs(abdominal ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$live_birth,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+
+## there's a signal only in the positive direction/ negative non-significant
+```{r}
+chem_mix<- names(dat)[2:33]
+offset <- dat$live_birth
+
+results1 = gwqs(cardiac ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$live_birth,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+## there's a signal only in the positive direction/ negative - significant
+```{r}
+chem_mix<- names(dat)[2:33]
+offset <- dat$live_birth
+
+results1 = gwqs(cranial ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$live_birth,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+
+#significant in positive direction
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(lymphomas_and_reticuloendothelial_neoplasms ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+#significant in both directions
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(malignant_bone_tumors ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = TRUE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 > 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+#significant in negative direction
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(neuroblastoma_and_other_peripheral_nervous_cell_tu ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+
+# other neoplasms did not run in positive/neg due to missing values
+#renal sig in positive direction
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(renal_tumors ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+#significant in positive
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(soft_tissue_and_other_extraosseous_sarcomas ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+# Not significant in either directions
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(retinoblastoma ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+# not significant in both directions
+```{r}
+chem_mix<- names(dat)[2:33]
+#offset <- dat$ped_popln
+
+results1 = gwqs(hepatic_tumors ~ wqs, 
+               mix_name = chem_mix, 
+               offset= dat$ped_popln,
+               zero_infl = FALSE, #only for cancer sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 10, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(results1)
+gwqs_scatterplot(results1)
+gwqs_summary_tab(results1)
+sum(results1$bres$b1 < 0) 
+
+summary(results1$fit)
+results1$final_weights
+```
+
+######################################################################################
+######################################################################################
+# Analysis strategy 2
+#Estimate WQS adjusted by covariates without constraining; count the number of betas that are positive/negative out of B
+# Constraining in the direction that was significant
+#positive direction
+```{r}
+result2 <- gwqs(hepatic_tumors ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln,
+               zero_infl = FALSE, #only for sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 100, 
+               b1_pos = TRUE, b1_constr = FALSE, #significant positive direction
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(result2)
+gwqs_summary_tab(result2)
+gwqs_scatterplot(result2)
+sum(result2$bres$b1 > 0)  
+sum(result2$bres$b1 < 0) 
+
+```
+
+#negative direction
+```{r}
+result2 <- gwqs(hepatic_tumors ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln,
+               zero_infl = FALSE, #only for sub-types
+               data = dat,
+               q=10, validation= 0.6, b = 100, 
+               b1_pos = FALSE, b1_constr = FALSE, 
+               family= "negbin", 
+               seed = 2023)
+
+gwqs_barplot(result2)
+gwqs_summary_tab(result2)
+gwqs_scatterplot(result2)
+sum(result2$bres$b1 < 0)  
+sum(result2$bres$b1 > 0) 
+
+```
+
+#Analysis strategy 3- compare to random subset WQS - Total_can,CNS,Germ cell,malignant bone,renal and soft tissue were positive and significant
+#b=500,400,300,250,100 data did not converge
+```{r}
+
+result4 = gwqs(cns_and_miscellaneous_intracranial_and_intraspinal ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct,
+               mix_name = chem_mix, offset=dat$ped_popln,data = dat, q = 10, 
+               validation = 0.6,  b = 500, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123,rs=TRUE, n_var=5) # 5 for set of 18
+
+gwqs_summary_tab(result4) 
+gwqs_barplot(result4)
+gwqs_scatterplot(result4)
+gwqs_weights_tab(result4)
+sum(result4$bres$b1 > 0)
+```
+#Analysis strategy 4- with interaction term- # WQS with interaction - b12 significant (p=0.00000310)
+```{r}
+
+result2int = gwqs(total_can ~ wqs*m_pop +vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct,
+               mix_name = chem_mix, offset=dat$ped_popln,data = dat, q = 10, 
+               validation = 0.6,  b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123)
+
+gwqs_summary_tab(result2int) 
+gwqs_barplot(result2int)
+gwqs_scatterplot(result2int)
+gwqs_weights_tab(result2int)
+```
+
+#Analysis strategy 4- with interaction term- # WQS with interaction - b12 Non-significant (p=0.378)
+```{r}
+
+result2int = gwqs(total_can ~ wqs*f_pop +vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct,
+               mix_name = chem_mix, offset=dat$ped_popln,data = dat, q = 10, 
+               validation = 0.6,  b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123)
+
+gwqs_summary_tab(result2int) 
+gwqs_barplot(result2int)
+gwqs_scatterplot(result2int)
+gwqs_weights_tab(result2int)
+```
+
+#Analysis strategy: stratified variables in the mixtures- this does not work for my data due to poisson distribution
+
+#Analysis strategy 5: #repeated holdout WQS
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(total_can ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "total_cancer_WQSwtsrh5.csv")
+
+```
+
+#Analysis strategy 5: #repeated holdout WQS
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(cns_and_miscellaneous_intracranial_and_intraspinal ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "cns_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(germ_cell_tumors_trophoblastic_tumors_and_neopla ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "germcell_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(malignant_bone_tumors ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln,zero_infl = TRUE,# Zero-infl true as had no valid coefficients
+               data = dat, q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "malig_bone_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(renal_tumors ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat,
+               zero_infl = TRUE,# Zero-infl true as had no valid coefficients
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "renal_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(soft_tissue_and_other_extraosseous_sarcomas ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, 
+               zero_infl = TRUE,# Zero-infl true as had no valid coefficients
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "soft_tissue_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS 
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(leukemia ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, 
+               zero_infl = FALSE,
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "leukemia_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(lymphomas_and_reticuloendothelial_neoplasms ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, 
+               zero_infl = TRUE,
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "lymphoma_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(neuroblastoma_and_other_peripheral_nervous_cell_tu ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, 
+               zero_infl = TRUE,
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "neuroblastoma_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(retinoblastoma ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, 
+               zero_infl = TRUE,
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "retinoblastoma_WQSwtsrh5.csv")
+
+```
+
+
+#Analysis strategy 5: #repeated holdout WQS #no valid set of coefficients has been found
+```{r warning=FALSE}
+############################### takes FOREVER ##########################
+#repeated holdout WQS
+# positive direction
+result5rh = gwqsrh(hepatic_tumors ~ wqs+vehicle_pct+sing_pent_pct+ssi_snap_pct+
+                 m_blk_pct+f_blk_pct+m_hisp_pct+f_hisp_pct+m_heal_ins_pct+
+                 f_heal_ins_pct, 
+               mix_name = chem_mix, 
+               offset=dat$ped_popln, data = dat, 
+               zero_infl = TRUE,
+               q = 10, 
+               validation = 0.6, b = 100, b1_pos = TRUE, b1_constr = TRUE, family = "negbin", 
+               seed = 123, rh=5)
+gwqs_summary_tab(result5rh)
+gwqsrh_boxplot(result5rh)
+gwqs_weights_tab(result5rh)
+summary(result5rh$fit)
+result5rh$final_weights
+result5rh$final_weights$mean_weight = result5rh$final_weights$Estimate
+
+#
+write.csv(result5rh$wmat, "hepatic_WQSwtsrh5.csv")
+
+```

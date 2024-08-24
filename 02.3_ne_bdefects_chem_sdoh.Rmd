@@ -1,0 +1,56 @@
+---
+title: "02.3_ne_bdefects_chem_sdoh"
+author: "Taiba"
+date: "2023-07-17"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, stringr, zipcodeR, lubridate, tmap, sf, tigris)
+```
+
+```{r}
+
+dat_bd <- read_csv("bd_cnty_v7.csv") |>
+   rename(namelsad10 ="county") 
+
+ne_counties <- counties(state = "ne", cb = FALSE, resolution = "500k", year = "2010", class="sf") |>
+  clean_names()
+
+# Joining birth defects with ne counties shape file
+dat <- dat_bd |>
+  left_join(ne_counties, by = "namelsad10") |>
+  select(c(1:17,21,35))
+
+# reading Nebraska chemicals data
+dat_chem <- read_csv("ne_final_chem_widev5.csv") |>
+  rename(countyfp= "county_fips_code") |>
+  mutate(countyfp = str_pad(as.character(countyfp), width = 3, pad = "0"))
+
+#joining chemicals with birth defects data
+chem_bd <- dat|>
+  left_join(dat_chem, by ="countyfp")
+
+# save birth defects and chemical file
+write_csv(chem_bd, "birth_def_chem.csv")
+
+#RDA format
+save(chem_bd, file = "birth_def_chem.RDA")
+
+# Join SDOH and birth defects_chemicals data
+
+dat_svi <- load("ped_sdohProcessed.RDA") 
+sdoh <- dat |>
+  rename(geoid10= "geoid") 
+
+bd_chem_sdoh <- chem_bd |>
+left_join(sdoh, by = "geoid10")
+
+# save final birth defects, chemicals and sdoh data
+write_csv(bd_chem_sdoh, "birth_def_chem_sdoh.csv")
+
+#RDA format
+save(bd_chem_sdoh, file = "birth_def_chem_sdoh.RDA")
+```
+

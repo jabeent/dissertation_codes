@@ -1,0 +1,218 @@
+---
+title: "chri_symposium"
+author: "Taiba"
+date: "2023-08-15"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidymodels,tmap, sp, sf, tigris, spdep)
+```
+
+```{r}
+ne_chemi_class <- read_csv("ne_final_chemv4.csv") |>
+  filter(compound != "TRIASULFURON" & compound != "METSULFURON" & compound != "MCPA" ) |>
+  select(c(1:3)) |>
+  pivot_wider(names_from = compound, values_from = median_pest) |>
+  rename(countyfp = county_fips_code) |>
+  mutate(countyfp = str_pad(as.character(countyfp), width = 3, pad = "0"))
+```
+
+```{r}
+ne_counties <- counties(state = "NE", cb = F, resolution = "500k", year = "2014", class = "sf") %>%
+  clean_names()
+
+ne_counties <- ne_counties %>%
+  mutate(aland = round(as.numeric(aland) / 2589988.11)) ## 1 square mile = 2589988.11 square meters
+
+```
+
+
+
+```{r}
+# Perform the left join
+dat_fin <- left_join(ne_counties, ne_chemi_class, by = "countyfp")
+
+
+#normalizing data- dividing pesticide applied with total land per county 
+# units pesticide applied in kilogram per sq. mile
+dat_fin<- dat_fin |>
+  mutate(across(18:46, ~ . / aland))
+
+```
+
+
+```{r}
+library(tmap)
+library(viridis)
+
+chem <- "ATRAZINE"
+
+# Use a color-blind safe palette from viridis
+color_palette <- viridis_pal()(5)
+
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+              breaks = quantile(dat_fin[[chem]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+              palette = color_palette,
+              title = "Atrazine") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_text(text = "name") +
+  tm_layout(legend.title.size = 0.8,
+            legend.text.size = 0.6) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "chri_atrazine.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+
+```{r}
+library(tmap)
+library(viridis)
+
+chem <- "2,4-D"
+
+# Use a color-blind safe palette from viridis
+color_palette <- viridis_pal()(5)
+
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+              breaks = quantile(dat_fin[[chem]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+              palette = color_palette,
+              title = "2,4-D") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_text(text = "name") +
+  tm_layout(legend.title.size = 0.8,
+            legend.text.size = 0.6) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "chri_2,4-D.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+```{r}
+library(tmap)
+library(viridis)
+
+chem <- "GLYPHOSATE"
+
+# Use a color-blind safe palette from viridis
+color_palette <- viridis_pal()(5)
+
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+             breaks = quantile(dat_fin[[chem]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+              palette = color_palette,
+              title = "GLYPHOSATE") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_text(text = "name") +
+  tm_layout(legend.title.size = 0.8,
+            legend.text.size = 0.6) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+tmap_save(w, "chri_GLYPHOSATE.tiff",
+          width = 12, height = 12, dpi = 150)
+
+```
+
+# For Zahid Atrazine/Glyphosate 2019- 11/16/2023
+```{r}
+load("~/Desktop/Jabbeen/jt_dissert/jt_dissert/pest_conus_v2.RDA")
+dat_conus$year<- as.numeric(as.character(dat_conus$year))
+```
+
+```{r}
+dat_ne <- dat_conus |>
+  filter(state_fips_code == "31" & year == 2019)|>
+  group_by(county_fips_code, compound)|>
+  summarize(median_pest = median(pest_applied, na.rm = TRUE))
+
+#write_csv(dat_ne, "ne_zh_2019.csv")
+
+#
+ne_wide <- dat_ne |>
+   pivot_wider(names_from = compound, values_from = median_pest) |>
+  rename(countyfp = county_fips_code) |>
+   mutate_at(vars(2:47), ~log10(.+0.0000001)) |>
+    mutate(across(everything(), ~replace(., is.na(.), -16.1181)))|>
+  mutate(countyfp = str_pad(as.character(countyfp), width = 3, pad = "0"))
+
+#
+ne_counties <- counties(state = "NE", cb = F, resolution = "500k", year = "2014", class = "sf") %>%
+  clean_names()
+
+# Perform the left join
+dat_fin <- left_join(ne_counties, ne_wide, by = "countyfp")
+
+#write_csv(dat_fin, "ne_map_zh_2019.csv")
+
+#
+library(tmap)
+library(RColorBrewer)  # Load the RColorBrewer library
+
+chem <- "GLYPHOSATE"
+
+# Use a color-blind safe palette from RColorBrewer
+color_palette <- brewer.pal(5, "Set2") 
+
+w <- tm_shape(dat_fin) +
+  tm_polygons(col = chem,
+             breaks = quantile(dat_fin[[chem]], probs = c(0, 0.25, 0.5, 0.75, 1), na.rm = T),
+              legend.is.portrait = FALSE,
+              palette = color_palette,  # Use the new palette
+              title = "Log-scale|Median Glyphosate applied- 2019") +
+  tm_borders("gray90", alpha = 0.002) +
+  tm_text(text = "name") +
+  tm_layout(legend.title.size = 0.8,
+            legend.text.size = 0.6) +
+  tm_legend(position = c("left", "bottom"), 
+            frame = TRUE, stack = "vertical") +
+  tm_compass(position = c("right", "top"))  # Add compass to top right corner
+
+
+tmap_save(w, "zh_GLYPHOSATE.tiff",
+          width = 12, height = 12, dpi = 100)
+```
+
+
+```{r}
+# Load the tidyverse package
+library(tidyverse)
+
+# Read the data from the text file
+data <- read.table("raw_data_txt/Epest.county.2019.txt", header = TRUE, sep = "\t")
+
+# Remove the "EPEST_LOW_KG" variable
+data <- data %>% select(-EPEST_LOW_KG)
+
+
+# Select only data for state_fips_code 31 (Nebraska)
+nebraska_data <- data %>%
+  filter(STATE_FIPS_CODE == 31)
+
+# Group by compound and create a new variable 'sum' for the sum of each compound applied in NE counties
+result <- nebraska_data %>%
+  group_by(COMPOUND) %>%
+  summarise(sum = sum(EPEST_HIGH_KG, na.rm = TRUE))
+
+# Print the result
+print(result)
+
+#
+#write_csv(result, "ne_amount_2019.csv")
+
+```
+

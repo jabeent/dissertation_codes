@@ -1,0 +1,190 @@
+---
+title: "01.2_PCA_analysis"
+author: "Taiba"
+date: "2023-04-23"
+output: pdf_document
+---
+
+```{r}
+library(pacman)
+pacman::p_load(tidyverse, janitor, tidymodels, factoextra, ggfortify, gridExtra, knitr)
+```
+
+```{r}
+chemi_class<- read_csv("final_chemv5.csv") |>
+  filter(compound != "PICLORAM" & compound != "METSULFURON" & compound != "TRICLOPYR")
+```
+
+```{r}
+# pivot from long to wide format contains 3069 obs with 28 variables
+chemi_wide <- chemi_class[c(1:4)] |>
+  pivot_wider(names_from = compound, values_from = median_pest) |>
+  select(-c(state, county_fips_code))|>
+ mutate_at(vars(1:23), ~log10(.+0.0000001)) 
+
+#replacing NA values due to missing information from original data from EPA
+# replace all missing values with log(0.0000001) = -16.1181
+chemi_wide_new <- chemi_wide |>
+  mutate(across(everything(), ~replace(., is.na(.), -16.1181)))
+
+# Calculate principal components
+#scale: a logical value indicating whether the variables should be scaled to have unit variance before the analysis takes place
+pca.ln <- prcomp(chemi_wide_new, scale = TRUE)
+save(pca.ln, file = "pca_ln.rda")
+```
+########################################################################
+########################################################################
+        WORK FROM HERE
+
+########################################################################
+########################################################################
+
+```{r}
+#load model object
+load("pca_ln.rda")
+```
+
+```{r}
+eigenvalues_ln <- matrix(pca.ln$sdev^2) #eigenvalues
+perc_variance <- round(100*matrix(pca.ln$sdev^2/sum(pca.ln$sdev^2)),1) #variance
+
+#Summary table 
+eigenvalues_ln <- cbind(1:24, eigenvalues_ln, perc_variance) 
+colum_ln <- c("Principal Component", "Eigenvalues", "Percent Variance")
+eigenvalues_ln <- kable(eigenvalues_ln, col.names = colum_ln)
+eigenvalues_ln 
+```
+
+## Proportion of Variance Plots
+The first two components explained 55% of the variance 
+```{r PVE plots}
+#Plots the proportion of variance explained by each component (scree plot)
+pve.ln <- pca.ln$sdev^2/sum(pca.ln$sdev^2) #proportion of variance explain by each component
+ 
+#log-transformed data
+fviz_eig(pca.ln, main = "",
+         xlab = "Principal component",
+         ylim = c(0,50))
+
+ggsave("pca_screeplot.tiff",
+       width=6, height= 6, dpi=300)
+```
+
+
+## Data Visualization of eigenvectors w/ Log-Transformed PCA Results
+Loadings are the weights that each chemical contribute to the component. Scores are the sum of loadings multiply by concentration of each chemical for each person. So you get a loading for each chemical in each component and also a total loading for each principal component (which is the sum of the chemical's loadings). You also get a score for each person (each observation) which is the sum of the scores of each chemical (loading*chemical concentration). So for each person (observation) you have a score for each principal component. Each principal component also has a score which is the sum of the scores within the principal component. 
+
+```{r}
+pca.ln.ld <- as.data.frame.matrix(pca.ln$rotation) ## rotation is the loadings variable within the pca output.
+pca.ln.ld$chem <- row.names(pca.ln.ld)
+
+#run compounds_classes from file 01_chemicals_sorting.Rmd
+# Convert the list to a tibble and unnest the list
+loadings_pca <- pca.ln.ld |>
+  mutate(Group = case_when(
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Herbicide ~ "Herbicide",
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Insecticide ~ "Insecticide",
+    chem %in% unlist(compound_classes) & chem %in% compound_classes$Fungicide ~ "Fungicide",
+    TRUE ~ NA_character_
+  ))
+
+plot_loadings_pca <- loadings_pca |> 
+  gather(key = "PC", value = "Loading", -chem, -Group) |> as.tibble()
+
+################################################################
+chem_order <- c("2,4-D", "ATRAZINE", "ACETOCHLOR","CLETHODIM", "DICAMBA","GLYPHOSATE", 
+                                      "IMAZETHAPYR", "PARAQUAT", "PENDIMETHALIN","CHLORIMURON","METOLACHLOR",
+                                      "METRIBUZIN", "NICOSULFURON","SETHOXYDIM", 
+                                      "SIMAZINE","THIFENSULFURON","TRIBENURON METHYL", "TRICLOPYR", "TRIFLURALIN","CARBARYL",         "CHLORPYRIFOS", "CYHALOTHRIN-LAMBDA","DIMETHOATE", "ESFENVALERATE","PERMETHRIN","CHLOROTHALONIL","MANCOZEB","PROPICONAZOLE")
+
+plot_loadings_pca |> 
+  filter(PC %in% c("PC1", "PC2", "PC3")) |> 
+  mutate(PC = as.factor(PC),
+         PC = fct_recode(PC, "PC 1" = "PC1",
+         "PC 2" = "PC2",
+         "PC 3" = "PC3"),
+         chem = factor(chem, levels = chem_order)) |> 
+  ggplot(aes(x = chem, 
+             y = Loading, 
+             fill=Group)) + 
+  geom_col() +
+  facet_wrap(~ PC) + 
+  theme_bw() + 
+  theme(legend.position = "bottom", 
+        axis.text.x = element_text(angle = 90, hjust = 1),
+        strip.background = element_rect(fill = "white")) +
+  geom_hline(yintercept = 0, size = 0.2) +
+  labs(x = "Chemicals",
+       y = "Loadings")
+
+ggsave("pca_loadings.tiff",
+       width=10, height= 7, dpi=300)
+```
+
+## Principal Component Biplot w/ Log-Transformed PCA Results
+
+```{r PCA biplot}
+#Creates a biplot showing the loadings for principal component 1 and 2. 
+autoplot(pca.ln, data = chemi_wide_new, size = 0.8, colour = 'blue', alpha = 0.5,
+         loadings = TRUE, loadings.colour = 'orange',
+         loadings.label = TRUE, loadings.label.repel = T, 
+         loadings.label.size = 2.5, loadings.label.colour = 'black',
+         main = "Principal Component Analysis Biplot")
+
+ggsave("pca_biplot.tiff",
+       width=8, height= 8, dpi=300)
+```
+
+## PCA index score using median magnitude of first 5 components(or those with eigen values>=1) using Naveen's approach. We extract the first 5 components using [, 1:5]. Then, for each observation, we calculated the magnitude by taking the square root of the sum of squares of the 5 component values. Finally, we estimate the median of these magnitudes and store it in the variable score.
+
+```{r}
+# Naveen - Median magnitude
+#Extract the first 5 components
+first_5_components <- pca.ln$x[, 1:5]
+
+# Calculate the magnitude of each observation's first 5 components
+component_magnitudes <- apply(first_5_components, 1, function(x) sqrt(sum(x^2))) |>
+  as.data.frame() |>
+  rename_at(1, ~"med_magni")
+```
+
+```{r}
+### Method 2- PCA analysis Dr.Beseler approach
+#weighted scores
+factor_loadings <- pca.ln$rotation
+
+# Extract the scores with rotation
+scores <- pca.ln$x
+
+# multiplication of pesticide value with loading values by each county
+result_test <- tibble(result = scores * chemi_wide_new)
+
+#extract the multiplied values -> perform row sum of multiplied values -> retain only the index variable
+result_test_df<- pull(result_test, result) |>
+  mutate(chem_index= rowSums(across(everything())))|>
+  select(chem_index)
+
+#combine chem_index and median_magnitude into a dataframe
+new_index_vars<- cbind(result_test_df, component_magnitudes)
+
+new_index_vars_withpc1<- cbind(new_index_vars, pca.ln$x[,1])
+```
+
+```{r}
+## Save the summed score as a CSV file
+write_csv(new_index_vars_withpc1, "index_scores.csv")
+
+```
+
+#combine index variables with chemicals applied data
+```{r}
+chem_mapping <- chemi_class[c(1:4)] |>
+  pivot_wider(names_from = compound, values_from = median_pest) |>
+  mutate_at(vars(3:29), ~log10(.+0.0000001)) |>
+  mutate(across(everything(), ~replace(., is.na(.), -16.1181)))
+
+# final file for mapping
+dat_map<- cbind(chem_mapping, new_index_vars_withpc1)
+write_csv(dat_map, "mapping_dat_final.csv")
+```
+
