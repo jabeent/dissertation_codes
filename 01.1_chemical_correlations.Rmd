@@ -8,7 +8,6 @@ output: pdf_document
 ```{r}
 library(pacman)
 pacman::p_load(tidyverse, janitor, reshape2)
-
 ```
 
 ```{r}
